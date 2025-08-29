@@ -81,7 +81,7 @@ export default function DashboardScreen() {
   // Redirige al login si el usuario no está autenticado.
   useEffect(() => {
     if (!state.isLoggedIn && !state.driver && !state.currentFEC) {
-      router.replace("/login");
+      router.replace("/fec-input");
     }
   }, [state.isLoggedIn, state.driver, state.currentFEC]);
 
@@ -114,18 +114,33 @@ export default function DashboardScreen() {
     });
   };
 
+  // Lógica para determinar la entrega a mostrar y la lista de pendientes
+  const { currentDelivery, nextDeliveries, completedDeliveries } =
+    state.deliveryStatus;
+
+  // Ordenamos las entregas pendientes por proximidad una sola vez
+  const sortedPendingDeliveries = state.currentLocation
+    ? LocationService.sortDeliveriesByProximity(
+        nextDeliveries,
+        state.currentLocation
+      )
+    : nextDeliveries;
+
+  // La entrega a mostrar en la sección principal es la actual, o la primera de la lista de pendientes.
+  const deliveryToShow = currentDelivery || sortedPendingDeliveries[0] || null;
+
+  // La lista de pendientes ahora excluye la primera entrega si no hay una activa.
+  const pendingList = currentDelivery
+    ? sortedPendingDeliveries
+    : sortedPendingDeliveries.slice(1);
+
   // Retorna la lista de entregas según la pestaña activa.
   const getListData = (): Delivery[] => {
     switch (selectedTab) {
       case 0: // Pendientes
-        return state.currentLocation
-          ? LocationService.sortDeliveriesByProximity(
-              state.deliveryStatus.nextDeliveries,
-              state.currentLocation
-            )
-          : state.deliveryStatus.nextDeliveries;
+        return pendingList;
       case 1: // Completadas
-        return state.deliveryStatus.completedDeliveries || [];
+        return completedDeliveries || [];
       default:
         return [];
     }
@@ -178,8 +193,9 @@ export default function DashboardScreen() {
     index: number;
   }) => {
     const isDisabled =
-      state.deliveryStatus.hasActiveDelivery ||
-      (selectedTab === 0 && index > 0);
+      selectedTab === 0 ||
+      (selectedTab === 1 && state.deliveryStatus.hasActiveDelivery);
+
     const innerViewBackgroundColor = isDisabled ? "transparent" : "white";
 
     return (
@@ -245,7 +261,7 @@ export default function DashboardScreen() {
           ]}
         >
           <Text style={[styles.deliveryId, { color: "#007AFF" }]}>
-            ID: {item.delivery_id}
+            # Cliente: {item.delivery_id}
           </Text>
           <FontAwesome name="chevron-right" size={20} color="#007AFF" />
         </View>
@@ -306,62 +322,112 @@ export default function DashboardScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Current Delivery */}
-      {state.deliveryStatus.hasActiveDelivery &&
-        state.deliveryStatus.currentDelivery && (
-          <View style={styles.currentDeliveryContainer}>
-            <Text style={styles.sectionTitle}>Entrega Actual</Text>
-            <TouchableOpacity
-              style={[styles.deliveryCard, styles.activeDeliveryCard]}
-              onPress={() =>
-                handleDeliveryPress(state.deliveryStatus.currentDelivery!)
-              }
-            >
-              <View style={styles.activeDeliveryHeader}>
-                <Text style={styles.currentDeliveryText}>
-                  {state.deliveryStatus.currentDelivery.client?.name ||
-                    "Cliente desconocido"}
-                </Text>
-                {tracking.isTimerActive && (
-                  <View style={styles.timerContainer}>
-                    <FontAwesome name="clock-o" size={16} color="#007AFF" />
-                    <Text style={styles.timerText}>
-                      {tracking.formattedTime}
+      {/* Sección de Entrega Actual / Siguiente Entrega */}
+      {deliveryToShow && (
+        <View style={styles.currentDeliveryContainer}>
+          <Text style={styles.sectionTitle}>
+            {deliveryToShow.status === "in_progress"
+              ? "Entrega Actual"
+              : "Siguiente Entrega"}
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.deliveryCard,
+              deliveryToShow.status === "in_progress"
+                ? styles.activeDeliveryCard
+                : styles.nextDeliveryCard,
+            ]}
+            onPress={() => handleDeliveryPress(deliveryToShow)}
+          >
+            {/* --- VISTA PARA ENTREGA EN PROGRESO --- */}
+            {deliveryToShow.status === "in_progress" && (
+              <>
+                <View style={styles.activeDeliveryHeader}>
+                  <Text style={styles.currentDeliveryText}>
+                    {deliveryToShow.client?.name || "Cliente desconocido"}
+                  </Text>
+                  {tracking.isTimerActive && (
+                    <View style={styles.timerContainer}>
+                      <FontAwesome name="clock-o" size={16} color="#007AFF" />
+                      <Text style={styles.timerText}>
+                        {tracking.formattedTime}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.trackingInfo}>
+                  <Text style={styles.currentDeliverySubtext}>
+                    En progreso...
+                  </Text>
+                  {tracking.isTracking && (
+                    <View style={styles.trackingStats}>
+                      <View style={styles.trackingStat}>
+                        <FontAwesome
+                          name="map-marker"
+                          size={12}
+                          color="#28A745"
+                        />
+                        <Text style={styles.trackingStatText}>
+                          Tracking activo
+                        </Text>
+                      </View>
+                      <View style={styles.trackingStat}>
+                        <FontAwesome name="road" size={12} color="#666" />
+                        <Text style={styles.trackingStatText}>
+                          {tracking.totalDistance > 0
+                            ? formatDistance(tracking.totalDistance)
+                            : "0m"}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              </>
+            )}
+
+            {/* --- VISTA PARA SIGUIENTE ENTREGA (PENDIENTE) --- */}
+            {deliveryToShow.status === "pending" && (
+              <>
+                <View style={styles.deliveryHeader}>
+                  <Text style={styles.clientName}>
+                    {deliveryToShow.client?.name || "Cliente desconocido"}
+                  </Text>
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      {
+                        backgroundColor: getStatusColor(deliveryToShow.status),
+                      },
+                    ]}
+                  >
+                    <Text style={styles.statusText}>Toca para iniciar</Text>
+                  </View>
+                </View>
+                <View style={styles.deliveryInfo}>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="phone" size={20} color="#007AFF" />
+                    <Text style={styles.infoText}>
+                      {deliveryToShow.client?.phone || "N/A"}
                     </Text>
                   </View>
-                )}
-              </View>
-
-              <View style={styles.trackingInfo}>
-                <Text style={styles.currentDeliverySubtext}>
-                  En progreso...
-                </Text>
-                {tracking.isTracking && (
-                  <View style={styles.trackingStats}>
-                    <View style={styles.trackingStat}>
-                      <FontAwesome
-                        name="map-marker"
-                        size={12}
-                        color="#28A745"
-                      />
-                      <Text style={styles.trackingStatText}>
-                        Tracking activo
-                      </Text>
-                    </View>
-                    <View style={styles.trackingStat}>
-                      <FontAwesome name="road" size={12} color="#666" />
-                      <Text style={styles.trackingStatText}>
-                        {tracking.totalDistance > 0
-                          ? formatDistance(tracking.totalDistance)
-                          : "0m"}
-                      </Text>
-                    </View>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="map-marker" size={20} color="#007AFF" />
+                    <Text style={styles.infoText}>
+                      Distancia: {formatDistance(deliveryToShow.distance)}
+                    </Text>
                   </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          </View>
-        )}
+                </View>
+                <View style={styles.deliveryFooter}>
+                  <Text style={[styles.deliveryId, { color: "#007AFF" }]}>
+                    # Cliente: {deliveryToShow.delivery_id}
+                  </Text>
+                  <FontAwesome name="chevron-right" size={20} color="#007AFF" />
+                </View>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Delivery List with Tabs */}
       <View style={styles.deliveryListContainer}>
@@ -490,6 +556,7 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: "white",
     padding: 20,
+    paddingBottom: 10,
     paddingTop: 50,
     flexDirection: "row",
     justifyContent: "space-between",
@@ -526,11 +593,11 @@ const styles = StyleSheet.create({
     margin: 15,
     padding: 15,
     borderRadius: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
+    // shadowColor: "#000",
+    // shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 2,
     overflow: "hidden",
   },
   deliveryListContainer: {
@@ -551,7 +618,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 15,
     marginBottom: 10,
-    elevation: 2,
+    elevation: 1,
     overflow: "hidden",
   },
   deliveryCardDisabled: {
@@ -560,6 +627,10 @@ const styles = StyleSheet.create({
   },
   activeDeliveryCard: {
     borderColor: "#007AFF",
+    borderWidth: 2,
+  },
+  nextDeliveryCard: {
+    borderColor: "#FFA500",
     borderWidth: 2,
   },
   deliveryHeader: {
@@ -614,17 +685,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     marginBottom: 5,
+    flex: 1, // Para que el texto no empuje el timer
   },
   currentDeliverySubtext: {
     fontSize: 14,
     color: "#007AFF",
+    fontWeight: "500",
   },
   emptyState: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 40,
-    marginTop: 20,
+    // marginTop: 10,
   },
   emptyStateTitle: {
     fontSize: 20,

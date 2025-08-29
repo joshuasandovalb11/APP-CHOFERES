@@ -366,7 +366,7 @@ export default function DeliveryDetailScreen() {
             <Text style={styles.sectionTitle}>Información de Entrega</Text>
             <View style={styles.infoRow}>
               <FontAwesome name="hashtag" size={20} color="#007AFF" />
-              <Text style={styles.infoLabel}>ID:</Text>
+              <Text style={styles.infoLabel}>No. Cliente:</Text>
               <Text style={styles.infoValue}>{delivery.delivery_id}</Text>
             </View>
             {distance && (
@@ -610,8 +610,6 @@ const styles = StyleSheet.create({
     backgroundColor: "white",
     padding: 15,
     paddingBottom: 25,
-    // borderTopWidth: 1,
-    // borderTopColor: "#EFEFEF",
     flexDirection: "row",
     justifyContent: "space-around",
   },
