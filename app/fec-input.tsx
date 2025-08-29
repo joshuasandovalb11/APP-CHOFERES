@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import {
   StyleSheet,
-  Alert,
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
@@ -17,31 +16,26 @@ import { Driver } from "@/types";
 export default function FECInputScreen() {
   const [fecNumber, setFecNumber] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useApp();
+  const { login, startJourneyTracking } = useApp();
   const router = useRouter();
   const params = useLocalSearchParams();
 
   const handleFECSubmit = async () => {
     if (!fecNumber.trim()) {
-      Alert.alert("Error", "Por favor ingresa el número FEC");
+      alert("Error: Por favor ingresa el número FEC");
       return;
     }
 
     setIsLoading(true);
     try {
-      // Obtener datos del driver de los parámetros
       const driver: Driver = JSON.parse(params.driverData as string);
-
-      // Obtener las entregas del FEC
       const fecData = await mockApiService.getDeliveriesByFEC(fecNumber);
 
-      // Hacer login con el driver y FEC
       await login(driver, fecData);
-
-      // Navegar a la pantalla principal
+      startJourneyTracking();
       router.replace("/dashboard");
     } catch (error) {
-      Alert.alert("Error", "Número FEC no válido o no hay entregas asignadas");
+      alert("Error: Número FEC no válido o no hay entregas asignadas");
     } finally {
       setIsLoading(false);
     }
@@ -67,9 +61,11 @@ export default function FECInputScreen() {
         <View style={styles.form}>
           <TextInput
             style={styles.input}
-            placeholder="Ej: FEC-2024-001"
+            placeholder="Ej: FEC-2001"
             value={fecNumber}
-            onChangeText={setFecNumber}
+            onChangeText={(text) =>
+              setFecNumber(text.toUpperCase().replace(/\s/g, ""))
+            }
             autoCapitalize="characters"
             autoCorrect={false}
             editable={!isLoading}

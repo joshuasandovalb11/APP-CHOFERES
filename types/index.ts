@@ -30,29 +30,21 @@ export interface Delivery {
   end_longitud?: number;
   accepted_next_at?: string;
   client?: Client;
-  status?: 'pending' | 'in_progress' | 'completed' | 'cancelled';
-  distance?: number; // distancia en metros
-  priority?: number; // para ordenar por proximidad
+  status?: "pending" | "in_progress" | "completed" | "cancelled";
+  distance?: number;
+  priority?: number;
 }
 
-// Delivery tracking types
-export interface DeliveryTracking {
-  tracking_id: number;
-  delivery_id: number;
-  driver_id: number;
-  timestamp: string;
-  latitud: number;
-  longitud: number;
-}
+// EventType para marcar inicios y fines de entregas
+export type TrackingEventType = "journey" | "start_delivery" | "end_delivery";
 
-// Delivery events types
-export interface DeliveryEvent {
-  event_id: number;
-  delivery_id: number;
-  event_type: "inicio" | "fin" | "pausa" | "reanudacion" | "problema";
+// Types para calcular los puntos de ruta
+export interface TrackingPoint {
+  latitude: number;
+  longitude: number;
   timestamp: string;
-  latitud: number;
-  longitud: number;
+  eventType: TrackingEventType;
+  deliveryId?: number;
 }
 
 // Location types
@@ -66,15 +58,16 @@ export interface DeliveryStatus {
   hasActiveDelivery: boolean;
   currentDelivery: Delivery | null;
   nextDeliveries: Delivery[];
+  completedDeliveries: Delivery[];
 }
 
-// FEC (Factura de Entrega Chofer) - Este será el número que ingresa el chofer
+// FEC (Factura de Entrega Chofer)
 export interface FEC {
   fec_number: string;
   driver_id: number;
   date: string;
   deliveries: Delivery[];
-  status: 'active' | 'completed';
+  status: "active" | "completed";
 }
 
 // Auth types

@@ -1,20 +1,28 @@
-import * as Location from 'expo-location';
-import * as Linking from 'expo-linking';
-import { Location as LocationType } from '../types';
+import * as Location from "expo-location";
+import { Linking, Platform, Alert } from "react-native";
+import { Location as LocationType } from "../types";
 
 export class LocationService {
   private watchId: Location.LocationSubscription | null = null;
 
   async requestPermissions(): Promise<boolean> {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        const backgroundStatus = await Location.requestBackgroundPermissionsAsync();
-        return backgroundStatus.status === 'granted';
+      const { status: foregroundStatus } =
+        await Location.requestForegroundPermissionsAsync();
+      if (foregroundStatus !== "granted") {
+        const { status: backgroundStatus } =
+          await Location.requestBackgroundPermissionsAsync();
+        if (backgroundStatus !== "granted") {
+          Alert.alert(
+            "Permisos insuficientes",
+            "La aplicación necesita permisos de ubicación para funcionar correctamente."
+          );
+          return false;
+        }
       }
       return true;
     } catch (error) {
-      console.error('Error requesting location permissions:', error);
+      console.error("Error requesting location permissions:", error);
       return false;
     }
   }
@@ -23,7 +31,7 @@ export class LocationService {
     try {
       const hasPermission = await this.requestPermissions();
       if (!hasPermission) {
-        throw new Error('No hay permisos de ubicación');
+        throw new Error("No hay permisos de ubicación");
       }
 
       const location = await Location.getCurrentPositionAsync({
@@ -35,12 +43,14 @@ export class LocationService {
         longitude: location.coords.longitude,
       };
     } catch (error) {
-      console.error('Error getting current location:', error);
+      console.error("Error getting current location:", error);
       return null;
     }
   }
 
-  async startLocationTracking(callback: (location: LocationType) => void): Promise<boolean> {
+  async startLocationTracking(
+    callback: (location: LocationType) => void
+  ): Promise<boolean> {
     try {
       const hasPermission = await this.requestPermissions();
       if (!hasPermission) {
@@ -63,7 +73,7 @@ export class LocationService {
 
       return true;
     } catch (error) {
-      console.error('Error starting location tracking:', error);
+      console.error("Error starting location tracking:", error);
       return false;
     }
   }
@@ -75,11 +85,7 @@ export class LocationService {
     }
   }
 
-  // Calcular distancia entre dos puntos usando fórmula Haversine
-  calculateDistance(
-    point1: LocationType,
-    point2: LocationType
-  ): number {
+  calculateDistance(point1: LocationType, point2: LocationType): number {
     const R = 6371e3; // Radio de la Tierra en metros
     const φ1 = (point1.latitude * Math.PI) / 180;
     const φ2 = (point2.latitude * Math.PI) / 180;
@@ -94,8 +100,10 @@ export class LocationService {
     return R * c; // Distancia en metros
   }
 
-  // Abrir Google Maps para navegación
-  async openGoogleMaps(destination: LocationType, origin?: LocationType): Promise<void> {
+  async openGoogleMaps(
+    destination: LocationType,
+    origin?: LocationType
+  ): Promise<void> {
     try {
       let url: string;
 
@@ -116,64 +124,74 @@ export class LocationService {
         await Linking.openURL(fallbackUrl);
       }
     } catch (error) {
-      console.error('Error opening maps:', error);
+      console.error("Error opening maps:", error);
     }
   }
 
   // Abrir Google Maps solo para ver la ubicación (sin navegación)
   async viewLocationOnMap(location: LocationType): Promise<void> {
     try {
-      const url = `https://www.google.com/maps/@${location.latitude},${location.longitude},15z`;
-      
+      const label = "Ubicación del Cliente";
+      const url = `geo:${location.latitude},${location.longitude}?q=${location.latitude},${location.longitude}(${label})&z=15`;
+
       const supported = await Linking.canOpenURL(url);
       if (supported) {
         await Linking.openURL(url);
       } else {
-        const fallbackUrl = `maps:${location.latitude},${location.longitude}`;
+        // Fallback a la URL web si no hay una app de mapas
+        const fallbackUrl = `https://www.google.com/maps/search/?api=1&query=...,${location.longitude},15z`;
         await Linking.openURL(fallbackUrl);
       }
     } catch (error) {
-      console.error('Error opening maps:', error);
+      console.error("Error opening maps to view location:", error);
+      Alert.alert("Error", "No se pudo abrir la aplicación de mapas.");
     }
   }
 
-  // Convertir coordenadas a dirección (geocoding reverso)
   async getAddressFromCoordinates(location: LocationType): Promise<string> {
     try {
       const addresses = await Location.reverseGeocodeAsync(location);
       if (addresses.length > 0) {
         const address = addresses[0];
-        return `${address.street || ''} ${address.streetNumber || ''}, ${address.city || ''}, ${address.region || ''}`.trim();
+        return `${address.street || ""} ${address.streetNumber || ""}, ${
+          address.city || ""
+        }, ${address.region || ""}`
+          .trim()
+          .replace(/, $/, "");
       }
-      return `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`;
+      return `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(
+        6
+      )}`;
     } catch (error) {
-      console.error('Error getting address:', error);
-      return `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`;
+      console.error("Error getting address:", error);
+      return `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(
+        6
+      )}`;
     }
   }
 
-  // Ordenar entregas por proximidad
-  sortDeliveriesByProximity<T extends { client?: { gps_location: string } }>(
-    deliveries: T[],
-    currentLocation: LocationType
-  ): T[] {
-    return deliveries.sort((a, b) => {
-      const locationA = this.parseGPSLocation(a.client?.gps_location || '');
-      const locationB = this.parseGPSLocation(b.client?.gps_location || '');
-
-      if (!locationA || !locationB) return 0;
-
-      const distanceA = this.calculateDistance(currentLocation, locationA);
-      const distanceB = this.calculateDistance(currentLocation, locationB);
-
-      return distanceA - distanceB;
+  sortDeliveriesByProximity<
+    T extends { client?: { gps_location: string }; distance?: number }
+  >(deliveries: T[], currentLocation: LocationType): T[] {
+    const deliveriesWithDistance = deliveries.map((delivery) => {
+      const location = this.parseGPSLocation(
+        delivery.client?.gps_location || ""
+      );
+      const distance = location
+        ? this.calculateDistance(currentLocation, location)
+        : Infinity;
+      return { ...delivery, distance };
     });
+
+    return deliveriesWithDistance.sort((a, b) => a.distance - b.distance);
   }
 
-  // Parsear string de GPS location "lat,lng"
   private parseGPSLocation(gpsLocation: string): LocationType | null {
     try {
-      const [lat, lng] = gpsLocation.split(',').map(coord => parseFloat(coord.trim()));
+      if (!gpsLocation || !gpsLocation.includes(",")) return null;
+      const [lat, lng] = gpsLocation
+        .split(",")
+        .map((coord) => parseFloat(coord.trim()));
       if (isNaN(lat) || isNaN(lng)) return null;
       return { latitude: lat, longitude: lng };
     } catch {

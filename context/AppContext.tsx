@@ -3,15 +3,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   AuthState,
   Delivery,
-  DeliveryStatus,
   Driver,
   FEC,
   Location,
+  TrackingPoint,
+  TrackingEventType,
 } from "../types";
+import LocationService from "@/services/location";
 
-// INTERFAZ SIMPLIFICADA: Se quita 'cancelledDeliveries'
 interface AppState extends AuthState {
-  deliveryStatus: DeliveryStatus & {
+  deliveryStatus: {
+    hasActiveDelivery: boolean;
+    currentDelivery: Delivery | null;
+    nextDeliveries: Delivery[];
     completedDeliveries: Delivery[];
   };
   currentLocation: Location | null;
@@ -22,15 +26,10 @@ interface AppState extends AuthState {
   };
   locationTracking: {
     isTracking: boolean;
-    trackingPoints: Array<{
-      latitude: number;
-      longitude: number;
-      timestamp: string;
-    }>;
+    trackingPoints: TrackingPoint[];
   };
 }
 
-// ACCIONES SIMPLIFICADAS: Se quita 'CANCEL_DELIVERY'
 type AppAction =
   | { type: "LOGIN"; payload: { driver: Driver; fec: FEC } }
   | { type: "LOGOUT" }
@@ -40,11 +39,11 @@ type AppAction =
   | { type: "START_TIMER"; payload: string }
   | { type: "UPDATE_TIMER"; payload: number }
   | { type: "STOP_TIMER" }
-  | { type: "START_LOCATION_TRACKING" }
-  | { type: "STOP_LOCATION_TRACKING" }
-  | { type: "ADD_TRACKING_POINT"; payload: any };
+  | { type: "START_JOURNEY_TRACKING" }
+  | { type: "STOP_JOURNEY_TRACKING" }
+  | { type: "ADD_TRACKING_POINT"; payload: TrackingPoint };
 
-// ESTADO INICIAL SIMPLIFICADO
+// ESTADO INICIAL
 const initialState: AppState = {
   isLoggedIn: false,
   driver: null,
@@ -67,7 +66,6 @@ const initialState: AppState = {
   },
 };
 
-// CONTEXTO SIMPLIFICADO: Se quita 'cancelDelivery'
 const AppContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<AppAction>;
@@ -76,6 +74,13 @@ const AppContext = createContext<{
   startDelivery: (deliveryId: number) => void;
   completeDelivery: (deliveryId: number) => void;
   updateLocation: (location: Location) => void;
+  startJourneyTracking: () => void;
+  stopJourneyTracking: () => void;
+  logDeliveryEvent: (
+    eventType: TrackingEventType,
+    deliveryId: number,
+    location: Location
+  ) => void;
 }>({
   state: initialState,
   dispatch: () => {},
@@ -84,9 +89,11 @@ const AppContext = createContext<{
   startDelivery: () => {},
   completeDelivery: () => {},
   updateLocation: () => {},
+  startJourneyTracking: () => {},
+  stopJourneyTracking: () => {},
+  logDeliveryEvent: () => {},
 });
 
-// REDUCER SIMPLIFICADO
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "LOGIN":
@@ -142,10 +149,32 @@ function appReducer(state: AppState, action: AppAction): AppState {
           ],
         },
         deliveryTimer: initialState.deliveryTimer,
-        locationTracking: initialState.locationTracking,
       };
 
-    // Casos de Timer y Tracking (sin cambios)
+    case "START_JOURNEY_TRACKING":
+      return {
+        ...state,
+        locationTracking: { isTracking: true, trackingPoints: [] },
+      };
+
+    case "STOP_JOURNEY_TRACKING":
+      return {
+        ...state,
+        locationTracking: { ...state.locationTracking, isTracking: false },
+      };
+
+    case "ADD_TRACKING_POINT":
+      return {
+        ...state,
+        locationTracking: {
+          ...state.locationTracking,
+          trackingPoints: [
+            ...state.locationTracking.trackingPoints,
+            action.payload,
+          ],
+        },
+      };
+
     case "START_TIMER":
       return {
         ...state,
@@ -165,34 +194,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         deliveryTimer: { ...state.deliveryTimer, isActive: false },
       };
-    case "START_LOCATION_TRACKING":
-      return {
-        ...state,
-        locationTracking: { isTracking: true, trackingPoints: [] },
-      };
-    case "STOP_LOCATION_TRACKING":
-      return {
-        ...state,
-        locationTracking: { ...state.locationTracking, isTracking: false },
-      };
-    case "ADD_TRACKING_POINT":
-      return {
-        ...state,
-        locationTracking: {
-          ...state.locationTracking,
-          trackingPoints: [
-            ...state.locationTracking.trackingPoints,
-            action.payload,
-          ],
-        },
-      };
 
     default:
       return state;
   }
 }
 
-// PROVIDER SIMPLIFICADO
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
@@ -210,14 +217,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const startDelivery = (deliveryId: number) => {
     dispatch({ type: "START_DELIVERY", payload: deliveryId });
+    dispatch({ type: "START_TIMER", payload: new Date().toISOString() });
   };
 
   const completeDelivery = (deliveryId: number) => {
     dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
+    dispatch({ type: "STOP_TIMER" });
   };
 
   const updateLocation = (location: Location) => {
     dispatch({ type: "SET_LOCATION", payload: location });
+  };
+
+  const startJourneyTracking = () => {
+    dispatch({ type: "START_JOURNEY_TRACKING" });
+    LocationService.startLocationTracking((location) => {
+      const trackingPoint: TrackingPoint = {
+        ...location,
+        timestamp: new Date().toISOString(),
+        eventType: "journey",
+      };
+      dispatch({ type: "ADD_TRACKING_POINT", payload: trackingPoint });
+      // Aquí iría la llamada a la API real para guardar el punto
+      // console.log("Tracking point added:", trackingPoint);
+    });
+  };
+
+  const stopJourneyTracking = () => {
+    LocationService.stopLocationTracking();
+    dispatch({ type: "STOP_JOURNEY_TRACKING" });
+  };
+
+  // Función para marcar eventos especiales en el tracking
+  const logDeliveryEvent = (
+    eventType: TrackingEventType,
+    deliveryId: number,
+    location: Location
+  ) => {
+    const eventPoint: TrackingPoint = {
+      ...location,
+      timestamp: new Date().toISOString(),
+      eventType,
+      deliveryId,
+    };
+    dispatch({ type: "ADD_TRACKING_POINT", payload: eventPoint });
+    // Aquí también se haría una llamada a la API para registrar el evento
   };
 
   return (
@@ -230,6 +274,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         startDelivery,
         completeDelivery,
         updateLocation,
+        startJourneyTracking,
+        stopJourneyTracking,
+        logDeliveryEvent,
       }}
     >
       {children}

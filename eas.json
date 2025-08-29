@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": ">= 16.17.4",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "Maps_API_KEY": "@EXPO_PUBLIC_GOOGLE_MAPS_API_KEY"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "channel": "production",
+      "env": {
+        "Maps_API_KEY": "@EXPO_PUBLIC_GOOGLE_MAPS_API_KEY"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

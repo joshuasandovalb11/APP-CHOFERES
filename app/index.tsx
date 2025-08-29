@@ -1,10 +1,10 @@
-import React, { useEffect } from 'react';
-import { StyleSheet, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Text, View } from '@/components/Themed';
-import { useApp } from '@/context/AppContext';
-import { Driver, FEC } from '@/types';
+import React, { useEffect } from "react";
+import { StyleSheet, ActivityIndicator } from "react-native";
+import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Text, View } from "@/components/Themed";
+import { useApp } from "@/context/AppContext";
+import { Driver, FEC } from "@/types";
 
 export default function IndexScreen() {
   const { state, login } = useApp();
@@ -15,33 +15,32 @@ export default function IndexScreen() {
   }, []);
 
   useEffect(() => {
-    // Si el usuario hace logout, redirigir al login
-    if (!state.isLoggedIn && state.driver === null && state.currentFEC === null) {
-      router.replace('/login');
+    if (
+      !state.isLoggedIn &&
+      state.driver === null &&
+      state.currentFEC === null
+    ) {
+      router.replace("/login");
     }
   }, [state.isLoggedIn, state.driver, state.currentFEC]);
 
   const checkAuthState = async () => {
     try {
-      // Intentar recuperar la sesión guardada
-      const driverData = await AsyncStorage.getItem('driver');
-      const fecData = await AsyncStorage.getItem('currentFEC');
+      const driverData = await AsyncStorage.getItem("driver");
+      const fecData = await AsyncStorage.getItem("currentFEC");
 
       if (driverData && fecData) {
         const driver: Driver = JSON.parse(driverData);
         const fec: FEC = JSON.parse(fecData);
-        
-        // Restaurar sesión
+
         await login(driver, fec);
-        router.replace('/dashboard');
+        router.replace("/dashboard");
       } else {
-        // No hay sesión guardada, ir al login
-        router.replace('/login');
+        router.replace("/login");
       }
     } catch (error) {
-      console.error('Error checking auth state:', error);
-      // En caso de error, ir al login
-      router.replace('/login');
+      console.error("Error checking auth state:", error);
+      router.replace("/login");
     }
   };
 
@@ -57,15 +56,15 @@ export default function IndexScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f5f5f5',
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f5f5f5",
   },
   title: {
     fontSize: 32,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginBottom: 10,
-    color: '#007AFF',
+    color: "#007AFF",
   },
   subtitle: {
     fontSize: 18,

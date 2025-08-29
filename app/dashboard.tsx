@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   StyleSheet,
   TouchableOpacity,
   RefreshControl,
-  Alert,
   FlatList,
   Platform,
+  Modal,
 } from "react-native";
 import { useRouter } from "expo-router";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
@@ -22,16 +22,70 @@ export default function DashboardScreen() {
   const tracking = useDeliveryTracking();
   const router = useRouter();
 
+  // Estados para controlar los modales
+  const [isLogoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [isAutoLogoutModalVisible, setAutoLogoutModalVisible] = useState(false);
+
+  const warningTimerRef = useRef<NodeJS.Timeout | number | null>(null);
+  const logoutTimerRef = useRef<NodeJS.Timeout | number | null>(null);
+
+  const TIME_UNTIL_WARNING = 1 * 60 * 1000;
+  const LOGOUT_COUNTDOWN = 30 * 1000;
+
+  // Limpia y cancela los temporizadores de cierre de sesión.
+  const cleanupTimers = () => {
+    if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+  };
+
+  // Ejecuta el cierre de sesión final.
+  const startFinalLogoutCountdown = async () => {
+    setAutoLogoutModalVisible(false);
+    await logout();
+  };
+
+  // Muestra el modal de advertencia e inicia el conteo final.
+  const showLogoutWarning = () => {
+    setAutoLogoutModalVisible(true);
+    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+    logoutTimerRef.current = setTimeout(
+      startFinalLogoutCountdown,
+      LOGOUT_COUNTDOWN
+    );
+  };
+
+  // Inicia el temporizador principal para el cierre de sesión automático.
+  const startLogoutTimer = () => {
+    cleanupTimers();
+    warningTimerRef.current = setTimeout(showLogoutWarning, TIME_UNTIL_WARNING);
+  };
+
+  // Vigila el estado de las entregas para iniciar/detener el timer de logout.
+  useEffect(() => {
+    const { hasActiveDelivery, nextDeliveries } = state.deliveryStatus;
+    const allTasksCompleted = !hasActiveDelivery && nextDeliveries.length === 0;
+
+    if (allTasksCompleted) {
+      startLogoutTimer();
+    } else {
+      cleanupTimers();
+    }
+    return () => cleanupTimers();
+  }, [state.deliveryStatus]);
+
+  // Obtiene la ubicación inicial al cargar.
   useEffect(() => {
     initializeLocation();
   }, []);
 
+  // Redirige al login si el usuario no está autenticado.
   useEffect(() => {
-    if (!state.isLoggedIn || !state.driver || !state.currentFEC) {
+    if (!state.isLoggedIn && !state.driver && !state.currentFEC) {
       router.replace("/login");
     }
   }, [state.isLoggedIn, state.driver, state.currentFEC]);
 
+  // Obtiene y guarda la ubicación actual del conductor.
   const initializeLocation = async () => {
     const location = await LocationService.getCurrentLocation();
     if (location) {
@@ -39,25 +93,20 @@ export default function DashboardScreen() {
     }
   };
 
+  // Maneja el gesto de "deslizar para refrescar".
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await initializeLocation();
     setIsRefreshing(false);
   };
 
+  // Maneja el cierre de sesión manual.
   const handleLogout = () => {
-    Alert.alert("Cerrar Sesión", "¿Estás seguro de que deseas cerrar sesión?", [
-      { text: "Cancelar", style: "cancel" },
-      {
-        text: "Cerrar Sesión",
-        onPress: async () => {
-          await logout();
-          router.replace("/login");
-        },
-      },
-    ]);
+    cleanupTimers();
+    setLogoutModalVisible(true);
   };
 
+  // Navega a la pantalla de detalle de entrega.
   const handleDeliveryPress = (delivery: Delivery) => {
     router.push({
       pathname: "/delivery-detail",
@@ -65,6 +114,7 @@ export default function DashboardScreen() {
     });
   };
 
+  // Retorna la lista de entregas según la pestaña activa.
   const getListData = (): Delivery[] => {
     switch (selectedTab) {
       case 0: // Pendientes
@@ -82,8 +132,9 @@ export default function DashboardScreen() {
   };
 
   const listData = getListData();
-  const tabTitles = ["Pendientes", "Completadas"]; // <-- PESTAÑAS SIMPLIFICADAS
+  const tabTitles = ["Pendientes", "Completadas"];
 
+  // Retorna un color según el estado de la entrega.
   const getStatusColor = (status?: string) => {
     switch (status) {
       case "pending":
@@ -97,6 +148,7 @@ export default function DashboardScreen() {
     }
   };
 
+  // Retorna un texto legible para el estado.
   const getStatusText = (status?: string) => {
     switch (status) {
       case "pending":
@@ -110,54 +162,98 @@ export default function DashboardScreen() {
     }
   };
 
+  // Formatea la distancia a metros o kilómetros.
   const formatDistance = (distance?: number) => {
     if (!distance && distance !== 0) return "N/A";
     if (distance < 1000) return `${Math.round(distance)}m`;
     return `${(distance / 1000).toFixed(1)}km`;
   };
 
-  const renderDeliveryItem = ({ item }: { item: Delivery }) => (
-    <TouchableOpacity
-      style={styles.deliveryCard}
-      onPress={() => handleDeliveryPress(item)}
-    >
-      <View style={styles.deliveryHeader}>
-        <Text style={styles.clientName}>
-          {item.client?.name || "Cliente desconocido"}
-        </Text>
+  // Renderiza un item de la lista de entregas.
+  const renderDeliveryItem = ({
+    item,
+    index,
+  }: {
+    item: Delivery;
+    index: number;
+  }) => {
+    const isDisabled =
+      state.deliveryStatus.hasActiveDelivery ||
+      (selectedTab === 0 && index > 0);
+    const innerViewBackgroundColor = isDisabled ? "transparent" : "white";
+
+    return (
+      <TouchableOpacity
+        style={[styles.deliveryCard, isDisabled && styles.deliveryCardDisabled]}
+        onPress={() => handleDeliveryPress(item)}
+        disabled={isDisabled}
+      >
         <View
           style={[
-            styles.statusBadge,
-            { backgroundColor: getStatusColor(item.status) },
+            styles.deliveryHeader,
+            { backgroundColor: innerViewBackgroundColor },
           ]}
         >
-          <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
-        </View>
-      </View>
-
-      <View style={styles.deliveryInfo}>
-        <View style={styles.infoRow}>
-          <FontAwesome name="phone" size={16} color="#666" />
-          <Text style={styles.infoText}>{item.client?.phone || "N/A"}</Text>
-        </View>
-
-        {item.status === "pending" && (
-          <View style={styles.infoRow}>
-            <FontAwesome name="map-marker" size={16} color="#666" />
-            <Text style={styles.infoText}>
-              Distancia: {formatDistance(item.distance)}
-            </Text>
+          <Text style={styles.clientName}>
+            {item.client?.name || "Cliente desconocido"}
+          </Text>
+          <View
+            style={[
+              styles.statusBadge,
+              { backgroundColor: getStatusColor(item.status) },
+            ]}
+          >
+            <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
           </View>
-        )}
-      </View>
+        </View>
 
-      <View style={styles.deliveryFooter}>
-        <Text style={styles.deliveryId}>ID: {item.delivery_id}</Text>
-        <FontAwesome name="chevron-right" size={16} color="#007AFF" />
-      </View>
-    </TouchableOpacity>
-  );
+        <View
+          style={[
+            styles.deliveryInfo,
+            { backgroundColor: innerViewBackgroundColor },
+          ]}
+        >
+          <View
+            style={[
+              styles.infoRow,
+              { backgroundColor: innerViewBackgroundColor },
+            ]}
+          >
+            <FontAwesome name="phone" size={20} color="#007AFF" />
+            <Text style={styles.infoText}>{item.client?.phone || "N/A"}</Text>
+          </View>
 
+          {item.status === "pending" && (
+            <View
+              style={[
+                styles.infoRow,
+                { backgroundColor: innerViewBackgroundColor },
+              ]}
+            >
+              <FontAwesome name="map-marker" size={20} color="#007AFF" />
+              <Text style={styles.infoText}>
+                Distancia: {formatDistance(item.distance)}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View
+          style={[
+            styles.deliveryFooter,
+            { backgroundColor: innerViewBackgroundColor },
+          ]}
+        >
+          <Text style={[styles.deliveryId, { color: "#007AFF" }]}>
+            ID: {item.delivery_id}
+          </Text>
+          <FontAwesome name="chevron-right" size={20} color="#007AFF" />
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // Renderiza el mensaje para listas vacías.
   const renderEmptyState = () => {
     const messages: {
       [key: number]: { icon: any; color: string; title: string; text: string };
@@ -169,7 +265,7 @@ export default function DashboardScreen() {
         text: "No tienes entregas pendientes.",
       },
       1: {
-        icon: "history",
+        icon: "send",
         color: "#6C757D",
         title: "Sin Entregas Completadas",
         text: "Aún no has completado ninguna entrega.",
@@ -206,7 +302,7 @@ export default function DashboardScreen() {
           <Text style={styles.fecInfo}>FEC: {state.currentFEC.fec_number}</Text>
         </View>
         <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-          <FontAwesome name="sign-out" size={20} color="#DC3545" />
+          <FontAwesome name="sign-out" size={25} color="#ff0019ff" />
         </TouchableOpacity>
       </View>
 
@@ -310,15 +406,86 @@ export default function DashboardScreen() {
           />
         )}
       </View>
+
+      {/* --- Modal para Logout Manual --- */}
+      <Modal
+        transparent={true}
+        visible={isLogoutModalVisible}
+        animationType="fade"
+        onRequestClose={() => setLogoutModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Cerrar Sesión</Text>
+            <Text style={styles.modalText}>
+              ¿Estás seguro de que deseas cerrar sesión?
+            </Text>
+            <View style={styles.modalButtonContainer}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => setLogoutModalVisible(false)}
+              >
+                <Text style={styles.modalButtonTextCancel}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonConfirm]}
+                onPress={async () => {
+                  setLogoutModalVisible(false);
+                  await logout();
+                }}
+              >
+                <Text style={styles.modalButtonText}>Cerrar Sesión</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* --- Modal para Logout Automático --- */}
+      <Modal
+        transparent={true}
+        visible={isAutoLogoutModalVisible}
+        animationType="fade"
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Cierre de sesión automático</Text>
+            <Text style={styles.modalText}>
+              Has completado todas tus entregas. Tu sesión se cerrará en{" "}
+              {LOGOUT_COUNTDOWN / 1000} segundos.
+            </Text>
+            <View style={styles.modalButtonContainer}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => {
+                  cleanupTimers();
+                  setAutoLogoutModalVisible(false);
+                }}
+              >
+                <Text style={styles.modalButtonTextCancel}>Permanecer</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonConfirm]}
+                onPress={async () => {
+                  cleanupTimers();
+                  setAutoLogoutModalVisible(false);
+                  await logout();
+                }}
+              >
+                <Text style={styles.modalButtonText}>Cerrar Sesión</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-// Estilos (sin cambios funcionales)
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5ff5",
+    backgroundColor: "#f5f5f5",
   },
   header: {
     backgroundColor: "white",
@@ -331,7 +498,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 1,
   },
   headerInfo: {
     flex: 1,
@@ -340,6 +507,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "bold",
     marginBottom: 5,
+    color: "#007AFF",
   },
   vehicleInfo: {
     fontSize: 14,
@@ -351,7 +519,7 @@ const styles = StyleSheet.create({
     color: "#999",
   },
   logoutButton: {
-    padding: 10,
+    paddingBottom: 40,
   },
   currentDeliveryContainer: {
     backgroundColor: "white",
@@ -363,6 +531,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    overflow: "hidden",
   },
   deliveryListContainer: {
     flex: 1,
@@ -370,7 +539,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "bold",
     marginBottom: 15,
     color: "#333",
@@ -378,13 +547,16 @@ const styles = StyleSheet.create({
   deliveryCard: {
     backgroundColor: "white",
     borderRadius: 10,
+    borderColor: "#e9ecef",
+    borderWidth: 1,
     padding: 15,
     marginBottom: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
     elevation: 2,
+    overflow: "hidden",
+  },
+  deliveryCardDisabled: {
+    opacity: 0.3,
+    backgroundColor: "#e9ecef",
   },
   activeDeliveryCard: {
     borderColor: "#007AFF",
@@ -422,6 +594,7 @@ const styles = StyleSheet.create({
   infoText: {
     marginLeft: 8,
     fontSize: 14,
+    fontWeight: 500,
     color: "#666",
   },
   deliveryFooter: {
@@ -433,8 +606,9 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   deliveryId: {
-    fontSize: 12,
+    fontSize: 14,
     color: "#999",
+    fontWeight: 800,
   },
   currentDeliveryText: {
     fontSize: 16,
@@ -517,9 +691,66 @@ const styles = StyleSheet.create({
   },
   androidTabText: {
     color: "#666",
+    fontSize: 16,
   },
   androidTabTextActive: {
     fontWeight: "bold",
     color: "#007AFF",
+    fontSize: 16,
+  },
+  // Estilos para el modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderRadius: 10,
+    padding: 20,
+    width: "85%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  modalText: {
+    fontSize: 16,
+    textAlign: "center",
+    marginBottom: 20,
+    color: "#333",
+  },
+  modalButtonContainer: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  modalButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginHorizontal: 5,
+  },
+  modalButtonCancel: {
+    backgroundColor: "#f0f0f0",
+  },
+  modalButtonConfirm: {
+    backgroundColor: "#ff0019ff",
+  },
+  modalButtonText: {
+    color: "white",
+    fontWeight: "bold",
+  },
+  modalButtonTextCancel: {
+    color: "#333",
+    fontWeight: "bold",
   },
 });

@@ -131,7 +131,7 @@ export const mockApiService = {
             client_id: 101,
             name: "Juan Pérez",
             phone: 8181234567,
-            gps_location: "32.510270649894636, -116.97665151089373",
+            gps_location: "32.500947254430116, -116.92049673664414",
           },
         },
         {
@@ -148,7 +148,7 @@ export const mockApiService = {
             client_id: 102,
             name: "María González",
             phone: 8187654321,
-            gps_location: "32.510270649894636, -116.97665151089373",
+            gps_location: "32.49405663163976, -116.9329384853697",
           },
         },
         {
@@ -165,7 +165,41 @@ export const mockApiService = {
             client_id: 103,
             name: "Carlos Rodríguez",
             phone: 8189876543,
-            gps_location: "32.510270649894636, -116.97665151089373",
+            gps_location: "32.497231852681146, -116.95960551717934",
+          },
+        },
+        {
+          delivery_id: 4,
+          driver_id: 1,
+          client_id: 104,
+          start_time: new Date().toISOString(),
+          start_latitud: 32.50400293893507,
+          start_longitud: -116.95667490030546,
+          status: "pending",
+          distance: 800,
+          priority: 3,
+          client: {
+            client_id: 104,
+            name: "Carlos Flores",
+            phone: 8189876543,
+            gps_location: "32.508991348572124, -116.94233324711278",
+          },
+        },
+        {
+          delivery_id: 5,
+          driver_id: 1,
+          client_id: 105,
+          start_time: new Date().toISOString(),
+          start_latitud: 32.50400293893507,
+          start_longitud: -116.95667490030546,
+          status: "pending",
+          distance: 800,
+          priority: 3,
+          client: {
+            client_id: 105,
+            name: "Santiago Jimenez",
+            phone: 8189876543,
+            gps_location: "32.48487337679138, -116.91661248319237",
           },
         },
       ],
@@ -175,7 +209,7 @@ export const mockApiService = {
   async validateDriver(username: string, password: string): Promise<Driver> {
     await new Promise((resolve) => setTimeout(resolve, 800));
 
-    if (username === "chofer1" && password === "password") {
+    if (username === "chofer1" && password === "1234") {
       return {
         driver_id: 1,
         username: "chofer1",
