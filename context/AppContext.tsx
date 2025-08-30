@@ -10,6 +10,7 @@ import {
   TrackingEventType,
 } from "../types";
 import LocationService from "@/services/location";
+import googleMapsService from "@/services/googleMapsService";
 
 interface AppState extends AuthState {
   deliveryStatus: {
@@ -41,9 +42,15 @@ type AppAction =
   | { type: "STOP_TIMER" }
   | { type: "START_JOURNEY_TRACKING" }
   | { type: "STOP_JOURNEY_TRACKING" }
-  | { type: "ADD_TRACKING_POINT"; payload: TrackingPoint };
+  | { type: "ADD_TRACKING_POINT"; payload: TrackingPoint }
+  | {
+      type: "SET_OPTIMIZED_ROUTE";
+      payload: {
+        optimizedOrderId_list: number[];
+        suggestedJourneyPolyline: string;
+      };
+    };
 
-// ESTADO INICIAL
 const initialState: AppState = {
   isLoggedIn: false,
   driver: null,
@@ -66,34 +73,6 @@ const initialState: AppState = {
   },
 };
 
-const AppContext = createContext<{
-  state: AppState;
-  dispatch: React.Dispatch<AppAction>;
-  login: (driver: Driver, fec: FEC) => Promise<void>;
-  logout: () => Promise<void>;
-  startDelivery: (deliveryId: number) => void;
-  completeDelivery: (deliveryId: number) => void;
-  updateLocation: (location: Location) => void;
-  startJourneyTracking: () => void;
-  stopJourneyTracking: () => void;
-  logDeliveryEvent: (
-    eventType: TrackingEventType,
-    deliveryId: number,
-    location: Location
-  ) => void;
-}>({
-  state: initialState,
-  dispatch: () => {},
-  login: async () => {},
-  logout: async () => {},
-  startDelivery: () => {},
-  completeDelivery: () => {},
-  updateLocation: () => {},
-  startJourneyTracking: () => {},
-  stopJourneyTracking: () => {},
-  logDeliveryEvent: () => {},
-});
-
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "LOGIN":
@@ -109,60 +88,129 @@ function appReducer(state: AppState, action: AppAction): AppState {
           ...initialState.deliveryStatus,
           nextDeliveries: pendingDeliveries,
         },
+        locationTracking: {
+          isTracking: false,
+          trackingPoints: [],
+        },
       };
 
-    case "LOGOUT":
-      return { ...initialState };
+    // --- LÓGICA UNIFICADA Y CORREGIDA PARA START_DELIVERY ---
+    case "START_DELIVERY": {
+      if (!state.currentFEC) return state;
 
-    case "SET_LOCATION":
-      return { ...state, currentLocation: action.payload };
-
-    case "START_DELIVERY":
-      const deliveryToStart = state.deliveryStatus.nextDeliveries.find(
+      const deliveryToStart = state.currentFEC.deliveries.find(
         (d) => d.delivery_id === action.payload
       );
       if (!deliveryToStart) return state;
+
+      const activeDelivery = {
+        ...deliveryToStart,
+        status: "in_progress" as const,
+      };
+
+      // 1. Actualizamos la lista principal (la fuente de verdad)
+      const updatedFecDeliveries = state.currentFEC.deliveries.map((d) =>
+        d.delivery_id === action.payload ? activeDelivery : d
+      );
+
+      // 2. Recalculamos las listas derivadas
+      const updatedNextDeliveries = updatedFecDeliveries.filter(
+        (d) => d.status === "pending"
+      );
+
       return {
         ...state,
+        currentFEC: {
+          ...state.currentFEC,
+          deliveries: updatedFecDeliveries,
+        },
         deliveryStatus: {
           ...state.deliveryStatus,
           hasActiveDelivery: true,
-          currentDelivery: { ...deliveryToStart, status: "in_progress" },
-          nextDeliveries: state.deliveryStatus.nextDeliveries.filter(
-            (d) => d.delivery_id !== action.payload
-          ),
+          currentDelivery: activeDelivery,
+          nextDeliveries: updatedNextDeliveries,
         },
       };
+    }
 
-    case "COMPLETE_DELIVERY":
-      const completedDelivery = state.deliveryStatus.currentDelivery;
-      if (!completedDelivery) return state;
+    case "COMPLETE_DELIVERY": {
+      if (!state.currentFEC || !state.deliveryStatus.currentDelivery)
+        return state;
+
+      const completedDelivery: Delivery = {
+        ...state.deliveryStatus.currentDelivery,
+        status: "completed" as const,
+      };
+
+      const updatedFecDeliveries = state.currentFEC.deliveries.map((d) =>
+        d.delivery_id === action.payload ? completedDelivery : d
+      );
+
+      const updatedCompletedDeliveries = [
+        ...state.deliveryStatus.completedDeliveries,
+        completedDelivery,
+      ];
+
+      const updatedNextDeliveries = updatedFecDeliveries.filter(
+        (d) => d.status === "pending"
+      );
+
       return {
         ...state,
+        currentFEC: {
+          ...state.currentFEC,
+          deliveries: updatedFecDeliveries,
+        },
         deliveryStatus: {
-          ...state.deliveryStatus,
           hasActiveDelivery: false,
           currentDelivery: null,
-          completedDeliveries: [
-            ...state.deliveryStatus.completedDeliveries,
-            { ...completedDelivery, status: "completed" },
-          ],
+          nextDeliveries: updatedNextDeliveries,
+          completedDeliveries: updatedCompletedDeliveries,
         },
         deliveryTimer: initialState.deliveryTimer,
       };
+    }
 
+    case "LOGOUT":
+      return { ...initialState };
+    case "SET_LOCATION":
+      return {
+        ...state,
+        currentLocation: action.payload,
+      };
+    case "START_TIMER":
+      return {
+        ...state,
+        deliveryTimer: {
+          ...state.deliveryTimer,
+          isActive: true,
+          startTime: action.payload,
+        },
+      };
+    case "UPDATE_TIMER":
+      return {
+        ...state,
+        deliveryTimer: { ...state.deliveryTimer, elapsedTime: action.payload },
+      };
+    case "STOP_TIMER":
+      return {
+        ...state,
+        deliveryTimer: {
+          ...state.deliveryTimer,
+          isActive: false,
+          elapsedTime: 0,
+        },
+      };
     case "START_JOURNEY_TRACKING":
       return {
         ...state,
-        locationTracking: { isTracking: true, trackingPoints: [] },
+        locationTracking: { ...state.locationTracking, isTracking: true },
       };
-
     case "STOP_JOURNEY_TRACKING":
       return {
         ...state,
         locationTracking: { ...state.locationTracking, isTracking: false },
       };
-
     case "ADD_TRACKING_POINT":
       return {
         ...state,
@@ -174,45 +222,78 @@ function appReducer(state: AppState, action: AppAction): AppState {
           ],
         },
       };
-
-    case "START_TIMER":
+    case "SET_OPTIMIZED_ROUTE":
+      if (!state.currentFEC) return state;
       return {
         ...state,
-        deliveryTimer: {
-          isActive: true,
-          startTime: action.payload,
-          elapsedTime: 0,
+        currentFEC: {
+          ...state.currentFEC,
+          optimizedOrderId_list: action.payload.optimizedOrderId_list,
+          suggestedJourneyPolyline: action.payload.suggestedJourneyPolyline,
         },
       };
-    case "UPDATE_TIMER":
-      return {
-        ...state,
-        deliveryTimer: { ...state.deliveryTimer, elapsedTime: action.payload },
-      };
-    case "STOP_TIMER":
-      return {
-        ...state,
-        deliveryTimer: { ...state.deliveryTimer, isActive: false },
-      };
-
     default:
       return state;
   }
 }
 
+const AppContext = createContext<{
+  state: AppState;
+  dispatch: React.Dispatch<AppAction>;
+  login: (driver: Driver, fec: FEC) => Promise<void>;
+  logout: () => void;
+  startDelivery: (deliveryId: number) => void;
+  completeDelivery: (deliveryId: number) => void;
+  updateLocation: (location?: Location) => void;
+  startJourneyTracking: () => void;
+  stopJourneyTracking: () => void;
+  logDeliveryEvent: (
+    eventType: TrackingEventType,
+    deliveryId: number,
+    location: Location
+  ) => void;
+  setOptimizedRoute: (
+    deliveries: Delivery[],
+    currentLocation: Location
+  ) => Promise<void>;
+}>({
+  state: initialState,
+  dispatch: () => null,
+  login: async () => {},
+  logout: () => {},
+  startDelivery: () => {},
+  completeDelivery: () => {},
+  updateLocation: async () => {},
+  startJourneyTracking: () => {},
+  stopJourneyTracking: () => {},
+  logDeliveryEvent: () => {},
+  setOptimizedRoute: async () => {},
+});
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
 
   const login = async (driver: Driver, fec: FEC) => {
-    await AsyncStorage.setItem("driver", JSON.stringify(driver));
-    await AsyncStorage.setItem("currentFEC", JSON.stringify(fec));
     dispatch({ type: "LOGIN", payload: { driver, fec } });
+    await AsyncStorage.setItem("driverData", JSON.stringify(driver));
+    await AsyncStorage.setItem("fecData", JSON.stringify(fec));
   };
 
   const logout = async () => {
     await AsyncStorage.removeItem("driver");
     await AsyncStorage.removeItem("currentFEC");
     dispatch({ type: "LOGOUT" });
+  };
+
+  const updateLocation = async (location?: Location) => {
+    if (location) {
+      dispatch({ type: "SET_LOCATION", payload: location });
+    } else {
+      const currentLocation = await LocationService.getCurrentLocation();
+      if (currentLocation) {
+        dispatch({ type: "SET_LOCATION", payload: currentLocation });
+      }
+    }
   };
 
   const startDelivery = (deliveryId: number) => {
@@ -225,10 +306,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "STOP_TIMER" });
   };
 
-  const updateLocation = (location: Location) => {
-    dispatch({ type: "SET_LOCATION", payload: location });
-  };
-
   const startJourneyTracking = () => {
     dispatch({ type: "START_JOURNEY_TRACKING" });
     LocationService.startLocationTracking((location) => {
@@ -238,8 +315,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         eventType: "journey",
       };
       dispatch({ type: "ADD_TRACKING_POINT", payload: trackingPoint });
-      // Aquí iría la llamada a la API real para guardar el punto
-      // console.log("Tracking point added:", trackingPoint);
     });
   };
 
@@ -248,7 +323,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "STOP_JOURNEY_TRACKING" });
   };
 
-  // Función para marcar eventos especiales en el tracking
   const logDeliveryEvent = (
     eventType: TrackingEventType,
     deliveryId: number,
@@ -261,7 +335,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
       deliveryId,
     };
     dispatch({ type: "ADD_TRACKING_POINT", payload: eventPoint });
-    // Aquí también se haría una llamada a la API para registrar el evento
+  };
+
+  const setOptimizedRoute = async (
+    deliveries: Delivery[],
+    currentLocation: Location
+  ) => {
+    try {
+      const result = await googleMapsService.getOptimizedRoute(
+        currentLocation,
+        deliveries
+      );
+
+      if (result) {
+        const optimizedOrderId_list = result.optimizedOrder.map(
+          (index) => deliveries[index].delivery_id
+        );
+
+        dispatch({
+          type: "SET_OPTIMIZED_ROUTE",
+          payload: {
+            optimizedOrderId_list,
+            suggestedJourneyPolyline: result.suggestedRoutePolyline,
+          },
+        });
+      }
+    } catch (error) {
+      console.error(
+        "Failed to set optimized route. Using default order.",
+        error
+      );
+    }
   };
 
   return (
@@ -277,6 +381,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         startJourneyTracking,
         stopJourneyTracking,
         logDeliveryEvent,
+        setOptimizedRoute,
       }}
     >
       {children}
@@ -284,10 +389,4 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export const useApp = () => {
-  const context = useContext(AppContext);
-  if (!context) {
-    throw new Error("useApp must be used within an AppProvider");
-  }
-  return context;
-};
+export const useApp = () => useContext(AppContext);

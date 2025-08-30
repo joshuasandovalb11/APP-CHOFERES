@@ -146,7 +146,7 @@ export const mockApiService = {
           priority: 2,
           client: {
             client_id: 102,
-            name: "María González",
+            name: "María Guadalupe González Ramos",
             phone: 8187654321,
             gps_location: "32.49405663163976, -116.9329384853697",
           },

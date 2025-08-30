@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import {
   StyleSheet,
   TouchableOpacity,
@@ -81,7 +81,7 @@ export default function DashboardScreen() {
   // Redirige al login si el usuario no está autenticado.
   useEffect(() => {
     if (!state.isLoggedIn && !state.driver && !state.currentFEC) {
-      router.replace("/fec-input");
+      router.replace("/login");
     }
   }, [state.isLoggedIn, state.driver, state.currentFEC]);
 
@@ -115,24 +115,44 @@ export default function DashboardScreen() {
   };
 
   // Lógica para determinar la entrega a mostrar y la lista de pendientes
-  const { currentDelivery, nextDeliveries, completedDeliveries } =
-    state.deliveryStatus;
+  const { currentDelivery, completedDeliveries } = state.deliveryStatus;
 
-  // Ordenamos las entregas pendientes por proximidad una sola vez
-  const sortedPendingDeliveries = state.currentLocation
-    ? LocationService.sortDeliveriesByProximity(
-        nextDeliveries,
+  // Ordenamos las entregas pendientes (incluyendo la que está en progreso)
+  const sortedPendingDeliveries = useMemo(() => {
+    const pending =
+      state.currentFEC?.deliveries.filter((d) => d.status !== "completed") ||
+      [];
+
+    const optimizedOrderIds = state.currentFEC?.optimizedOrderId_list;
+
+    if (optimizedOrderIds && optimizedOrderIds.length > 0) {
+      const deliveryMap = new Map(pending.map((d) => [d.delivery_id, d]));
+      return optimizedOrderIds
+        .map((id) => deliveryMap.get(id))
+        .filter((d): d is Delivery => d !== undefined);
+    }
+
+    if (state.currentLocation && pending.length > 0) {
+      return LocationService.sortDeliveriesByProximity(
+        pending,
         state.currentLocation
-      )
-    : nextDeliveries;
+      );
+    }
 
-  // La entrega a mostrar en la sección principal es la actual, o la primera de la lista de pendientes.
+    return pending;
+  }, [state.currentFEC, state.currentLocation]);
+
   const deliveryToShow = currentDelivery || sortedPendingDeliveries[0] || null;
 
-  // La lista de pendientes ahora excluye la primera entrega si no hay una activa.
-  const pendingList = currentDelivery
-    ? sortedPendingDeliveries
-    : sortedPendingDeliveries.slice(1);
+  // Lista de pendientes excluyendo la entrega actual
+  const pendingList = useMemo(() => {
+    if (currentDelivery) {
+      return sortedPendingDeliveries.filter(
+        (d) => d.delivery_id !== currentDelivery.delivery_id
+      );
+    }
+    return sortedPendingDeliveries.slice(1);
+  }, [currentDelivery, sortedPendingDeliveries]);
 
   // Retorna la lista de entregas según la pestaña activa.
   const getListData = (): Delivery[] => {
@@ -140,7 +160,7 @@ export default function DashboardScreen() {
       case 0: // Pendientes
         return pendingList;
       case 1: // Completadas
-        return completedDeliveries || [];
+        return state.deliveryStatus.completedDeliveries || [];
       default:
         return [];
     }
@@ -261,7 +281,7 @@ export default function DashboardScreen() {
           ]}
         >
           <Text style={[styles.deliveryId, { color: "#007AFF" }]}>
-            # Cliente: {item.delivery_id}
+            # Orden: {item.delivery_id}
           </Text>
           <FontAwesome name="chevron-right" size={20} color="#007AFF" />
         </View>
@@ -665,7 +685,7 @@ const styles = StyleSheet.create({
   infoText: {
     marginLeft: 8,
     fontSize: 14,
-    fontWeight: 500,
+    fontWeight: "500" as "500",
     color: "#666",
   },
   deliveryFooter: {
@@ -679,7 +699,7 @@ const styles = StyleSheet.create({
   deliveryId: {
     fontSize: 14,
     color: "#999",
-    fontWeight: 800,
+    fontWeight: "800" as "800",
   },
   currentDeliveryText: {
     fontSize: 16,

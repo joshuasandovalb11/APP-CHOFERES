@@ -6,23 +6,26 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Alert, // Importar Alert para mensajes nativos
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Text, View } from "@/components/Themed";
 import { useApp } from "@/context/AppContext";
 import { mockApiService } from "@/services/api";
 import { Driver } from "@/types";
+import LocationService from "@/services/location"; // Importar LocationService
 
 export default function FECInputScreen() {
   const [fecNumber, setFecNumber] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { login, startJourneyTracking } = useApp();
+  // Añadir setOptimizedRoute del contexto
+  const { login, startJourneyTracking, setOptimizedRoute } = useApp();
   const router = useRouter();
   const params = useLocalSearchParams();
 
   const handleFECSubmit = async () => {
     if (!fecNumber.trim()) {
-      alert("Error: Por favor ingresa el número FEC");
+      Alert.alert("Error", "Por favor ingresa el número FEC");
       return;
     }
 
@@ -31,11 +34,28 @@ export default function FECInputScreen() {
       const driver: Driver = JSON.parse(params.driverData as string);
       const fecData = await mockApiService.getDeliveriesByFEC(fecNumber);
 
+      try {
+        const currentLocation = await LocationService.getCurrentLocation();
+
+        if (currentLocation && fecData.deliveries.length > 0) {
+          // Llamar a la función del contexto para obtener y guardar la ruta optimizada
+          await setOptimizedRoute(fecData.deliveries, currentLocation);
+        } else {
+          console.log(
+            "No se pudo obtener la ubicación actual o no hay entregas para optimizar."
+          );
+        }
+      } catch (optimizationError) {
+        console.error("Optimization Error:", optimizationError);
+        // Opcional: podrías mostrar una alerta no bloqueante, pero para el conductor es mejor que no vea nada
+        // Alert.alert("Aviso", "No se pudo optimizar la ruta. Se mostrará en el orden predeterminado.");
+      }
+
       await login(driver, fecData);
       startJourneyTracking();
       router.replace("/dashboard");
     } catch (error) {
-      alert("Error: Número FEC no válido o no hay entregas asignadas");
+      Alert.alert("Error", "Número FEC no válido o no hay entregas asignadas");
     } finally {
       setIsLoading(false);
     }
@@ -52,23 +72,20 @@ export default function FECInputScreen() {
     >
       <View style={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.title}>Ingresa tu FEC</Text>
+          <Text style={styles.title}>Verificar FEC</Text>
           <Text style={styles.subtitle}>
-            Número de Factura de Entrega del Chofer
+            Ingresa el número de FEC para cargar tus entregas del día.
           </Text>
         </View>
 
         <View style={styles.form}>
           <TextInput
             style={styles.input}
-            placeholder="Ej: FEC-2001"
+            placeholder="Número FEC"
             value={fecNumber}
-            onChangeText={(text) =>
-              setFecNumber(text.toUpperCase().replace(/\s/g, ""))
-            }
-            autoCapitalize="characters"
-            autoCorrect={false}
-            editable={!isLoading}
+            onChangeText={setFecNumber}
+            keyboardType="number-pad"
+            returnKeyType="done"
           />
 
           <TouchableOpacity
@@ -77,7 +94,7 @@ export default function FECInputScreen() {
             disabled={isLoading}
           >
             {isLoading ? (
-              <ActivityIndicator color="white" />
+              <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.buttonText}>Continuar</Text>
             )}
@@ -114,6 +131,7 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "bold",
     marginBottom: 10,
+    color: "#007AFF",
   },
   subtitle: {
     fontSize: 16,
@@ -136,25 +154,24 @@ const styles = StyleSheet.create({
   },
   button: {
     backgroundColor: "#007AFF",
-    borderRadius: 8,
     padding: 15,
+    borderRadius: 8,
     alignItems: "center",
-    marginBottom: 15,
+    marginBottom: 10,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   buttonText: {
     color: "white",
+    fontWeight: "bold",
     fontSize: 16,
-    fontWeight: "600",
   },
   backButton: {
-    padding: 15,
-    alignItems: "center",
+    padding: 10,
   },
   backButtonText: {
     color: "#007AFF",
-    fontSize: 16,
+    textAlign: "center",
   },
 });

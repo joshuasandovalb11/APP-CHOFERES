@@ -68,6 +68,9 @@ export interface FEC {
   date: string;
   deliveries: Delivery[];
   status: "active" | "completed";
+  // --- NUEVOS CAMPOS PARA LA RUTA OPTIMIZADA ---
+  optimizedOrderId_list?: number[];
+  suggestedJourneyPolyline?: string;
 }
 
 // Auth types
