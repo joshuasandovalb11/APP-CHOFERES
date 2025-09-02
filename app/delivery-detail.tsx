@@ -7,6 +7,7 @@ import {
   Dimensions,
   Modal,
   Platform,
+  Linking,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
@@ -15,8 +16,12 @@ import { useApp } from "@/context/AppContext";
 import LocationService from "@/services/location";
 import { Delivery, Location } from "@/types";
 import MapView, { Marker } from "react-native-maps";
+import * as Notifications from "expo-notifications";
+import * as ExpoLocation from "expo-location";
 
 const { width } = Dimensions.get("window");
+
+const GEOFENCING_TASK = "geofencing-task";
 
 interface ModalInfo {
   visible: boolean;
@@ -36,6 +41,7 @@ export default function DeliveryDetailScreen() {
     completeDelivery,
     updateLocation,
     logDeliveryEvent,
+    setViewedDeliveryId,
   } = useApp();
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [destinationLocation, setDestinationLocation] =
@@ -52,10 +58,58 @@ export default function DeliveryDetailScreen() {
     buttons: [],
   });
 
+  // Este efecto se encarga de registrar y limpiar el ID de la entrega que se está viendo
+  useEffect(() => {
+    const idStr = Array.isArray(params.deliveryId)
+      ? params.deliveryId[0]
+      : params.deliveryId;
+
+    if (idStr) {
+      const idNum = Number(idStr);
+      setViewedDeliveryId(idNum);
+    }
+
+    return () => {
+      setViewedDeliveryId(null);
+    };
+  }, [params.deliveryId]);
+
+  // FUNCIÓN PARA MOSTRAR LA NOTIFICACIÓN PERSISTENTE
+  const showOngoingDeliveryNotification = async (deliveryId: number) => {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Entrega en progreso",
+        body: `En camino a la entrega #${deliveryId}. Toca para ver detalles.`,
+        sticky: true,
+        autoDismiss: false,
+        sound: true,
+        data: { deliveryId: deliveryId },
+      },
+      trigger: {
+        channelId: "delivery-ongoing",
+      },
+      identifier: `delivery-${deliveryId}`,
+    });
+  };
+
+  // FUNCIÓN PARA DETENER Y LIMPIAR TODO
+  const stopNotificationsAndGeofencing = async () => {
+    await Notifications.dismissAllNotificationsAsync();
+
+    const isTaskRunning = await ExpoLocation.hasStartedGeofencingAsync(
+      GEOFENCING_TASK
+    );
+    if (isTaskRunning) {
+      await ExpoLocation.stopGeofencingAsync(GEOFENCING_TASK);
+    }
+  };
+
+  // FUNCION PARA OCULTAR EL MODAL
   const hideModal = () => {
     setModalInfo({ ...modalInfo, visible: false });
   };
 
+  // FUNCION PARA ENCONTRAR UNA ENTREGA
   const findDelivery = (deliveryId: number): boolean => {
     const pendingDelivery = state.deliveryStatus.nextDeliveries.find(
       (d) => d.delivery_id === deliveryId
@@ -78,6 +132,7 @@ export default function DeliveryDetailScreen() {
     return false;
   };
 
+  // EFECTO PARA BUSCAR UNA ENTREGA
   useEffect(() => {
     const deliveryId = parseInt(params.deliveryId as string);
     const wasFound = findDelivery(deliveryId);
@@ -92,6 +147,7 @@ export default function DeliveryDetailScreen() {
     }
   }, [params.deliveryId, state]);
 
+  // EFECTO PARA ACTUALIZAR LA DISTANCIA Y LA UBICACION DE DESTINO
   useEffect(() => {
     if (delivery?.client?.gps_location && state.currentLocation) {
       const destination = parseGPSLocation(delivery.client.gps_location);
@@ -106,6 +162,7 @@ export default function DeliveryDetailScreen() {
     }
   }, [delivery, state.currentLocation]);
 
+  // FUNCION PARA INICIAR LA ENTREGA
   const handleStartDelivery = () => {
     if (!delivery) return;
     if (state.deliveryStatus.hasActiveDelivery) {
@@ -142,6 +199,21 @@ export default function DeliveryDetailScreen() {
                 );
               }
               startDelivery(delivery.delivery_id);
+
+              await showOngoingDeliveryNotification(delivery.delivery_id);
+              if (destinationLocation) {
+                await ExpoLocation.startGeofencingAsync(GEOFENCING_TASK, [
+                  {
+                    identifier: `delivery-${delivery.delivery_id}`,
+                    latitude: destinationLocation.latitude,
+                    longitude: destinationLocation.longitude,
+                    radius: 50,
+                    notifyOnEnter: true,
+                    notifyOnExit: false,
+                  },
+                ]);
+              }
+
               handleNavigate();
             } catch (error) {
               setModalInfo({
@@ -160,6 +232,7 @@ export default function DeliveryDetailScreen() {
     });
   };
 
+  // FUNCION PARA COMPLETAR LA ENTREGA
   const handleCompleteDelivery = () => {
     if (!delivery) return;
     setModalInfo({
@@ -184,6 +257,7 @@ export default function DeliveryDetailScreen() {
                   currentLocation
                 );
               }
+              await stopNotificationsAndGeofencing();
               completeDelivery(delivery.delivery_id);
               router.back();
             } catch (error) {
@@ -203,6 +277,83 @@ export default function DeliveryDetailScreen() {
     });
   };
 
+  // FUNCION PARA COMPLETAR LA ENTREGA
+  // const handleCompleteDelivery = async () => {
+  //   // Validaciones iniciales (delivery y su ubicación de destino)
+  //   if (!delivery || !destinationLocation) return;
+
+  //   setIsLoading(true);
+
+  //   try {
+  //     // Obtener la ubicación actual y precisa del chofer
+  //     const currentLocation = await LocationService.getCurrentLocation();
+  //     if (!currentLocation) {
+  //       throw new Error("No se pudo obtener la ubicación actual.");
+  //     }
+
+  //     updateLocation(currentLocation);
+
+  //     // Calcular la distancia entre el chofer y el cliente (en metros)
+  //     const distance = LocationService.calculateDistance(
+  //       currentLocation,
+  //       destinationLocation
+  //     );
+
+  //     const ALLOWED_RADIUS_METERS = 50;
+
+  //     // Comprobar si el chofer está dentro del radio permitido
+  //     if (distance <= ALLOWED_RADIUS_METERS) {
+  //       // SI ESTÁ CERCA: Mostrar el modal de confirmación original
+  //       setModalInfo({
+  //         visible: true,
+  //         title: "Completar Entrega",
+  //         message: "¿Confirmas que la entrega ha sido completada exitosamente?",
+  //         buttons: [
+  //           { text: "Cancelar", onPress: hideModal, style: "cancel" },
+  //           {
+  //             text: "Completar",
+  //             onPress: async () => {
+  //               hideModal();
+  //               await stopNotificationsAndGeofencing();
+  //               logDeliveryEvent(
+  //                 "end_delivery",
+  //                 delivery.delivery_id,
+  //                 currentLocation
+  //               );
+  //               completeDelivery(delivery.delivery_id);
+  //               router.back();
+  //             },
+  //             style: "confirm",
+  //           },
+  //         ],
+  //       });
+  //     } else {
+  //       // SI ESTÁ LEJOS: Mostrar un modal de error informativo
+  //       setModalInfo({
+  //         visible: true,
+  //         title: "Estás muy lejos",
+  //         message: `Debes estar a menos de ${ALLOWED_RADIUS_METERS} metros del cliente para completar la entrega. Actualmente estás a ${formatDistance(
+  //           distance
+  //         )}.`,
+  //         buttons: [{ text: "Entendido", onPress: hideModal }],
+  //       });
+  //     }
+  //   } catch (error) {
+  //     // Manejo de errores (por si falla el GPS, permisos, etc.)
+  //     setModalInfo({
+  //       visible: true,
+  //       title: "Error de Ubicación",
+  //       message:
+  //         "No se pudo verificar tu ubicación. Asegúrate de que el GPS esté activado y tengas permisos.",
+  //       buttons: [{ text: "OK", onPress: hideModal }],
+  //     });
+  //   } finally {
+  //     // Asegurarse de detener la carga sin importar el resultado
+  //     setIsLoading(false);
+  //   }
+  // };
+
+  // FUNCION PARA PARSEAR LA UBICACION GPS
   const parseGPSLocation = (gpsLocation: string): Location | null => {
     try {
       const [lat, lng] = gpsLocation
@@ -215,11 +366,13 @@ export default function DeliveryDetailScreen() {
     }
   };
 
+  // FUNCION PARA FORMATEAR LA DISTANCIA
   const formatDistance = (distance: number): string => {
-    if (distance < 1000) return `${Math.round(distance)}m`;
-    return `${(distance / 1000).toFixed(1)}km`;
+    if (distance < 1000) return `${Math.round(distance)} m`;
+    return `${(distance / 1000).toFixed(1)} km`;
   };
 
+  // FUNCION PARA INICIAR LA NAVEGACION
   const handleNavigate = async () => {
     if (!destinationLocation) {
       setModalInfo({
@@ -236,6 +389,7 @@ export default function DeliveryDetailScreen() {
     );
   };
 
+  // FUNCION PARA OBTENER EL COLOR DEL ESTADO
   const getStatusColor = (status?: string) => {
     switch (status) {
       case "pending":
@@ -249,6 +403,7 @@ export default function DeliveryDetailScreen() {
     }
   };
 
+  // FUNCION PARA OBTENER EL TEXTO DEL ESTADO
   const getStatusText = (status?: string) => {
     switch (status) {
       case "pending":
@@ -262,6 +417,7 @@ export default function DeliveryDetailScreen() {
     }
   };
 
+  // FUNCION PARA OBTENER EL ICONO DEL ESTADO
   const getStatusIcon = (
     status?: string
   ): keyof typeof FontAwesome.glyphMap => {
@@ -351,6 +507,13 @@ export default function DeliveryDetailScreen() {
               </Text>
             </View>
             <View style={styles.infoRow}>
+              <FontAwesome name="asterisk" size={20} color="#007AFF" />
+              <Text style={styles.infoLabel}>No. Cliente:</Text>
+              <Text style={styles.infoValue}>
+                {delivery.client?.client_id || "N/A"}
+              </Text>
+            </View>
+            <View style={styles.infoRow}>
               <FontAwesome name="phone" size={20} color="#007AFF" />
               <Text style={styles.infoLabel}>Teléfono:</Text>
               <Text style={styles.infoValue}>
@@ -382,11 +545,10 @@ export default function DeliveryDetailScreen() {
                 styles.infoRow,
                 { justifyContent: "center" },
                 { marginBottom: -2 },
-                { marginTop: 5 },
               ]}
             >
               <FontAwesome name="map" size={20} color="#007AFF" />
-              <Text style={styles.infoLabel}>Ubicación del cliente</Text>
+              <Text style={styles.infoLabel}>Ubicación de la entrega</Text>
             </View>
 
             {/* SECCION DEL MAPA INTERACTIVO */}
