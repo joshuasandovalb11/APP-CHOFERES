@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useReducer, ReactNode } from "react";
+import React, {
+  createContext,
+  useContext,
+  useReducer,
+  ReactNode,
+  Dispatch,
+} from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   AuthState,
@@ -29,6 +35,7 @@ interface AppState extends AuthState {
     isTracking: boolean;
     trackingPoints: TrackingPoint[];
   };
+  currentlyViewedDeliveryId: number | null;
 }
 
 type AppAction =
@@ -49,7 +56,8 @@ type AppAction =
         optimizedOrderId_list: number[];
         suggestedJourneyPolyline: string;
       };
-    };
+    }
+  | { type: "SET_VIEWED_DELIVERY_ID"; payload: number | null };
 
 const initialState: AppState = {
   isLoggedIn: false,
@@ -71,6 +79,7 @@ const initialState: AppState = {
     isTracking: false,
     trackingPoints: [],
   },
+  currentlyViewedDeliveryId: null,
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -232,6 +241,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
           suggestedJourneyPolyline: action.payload.suggestedJourneyPolyline,
         },
       };
+    case "SET_VIEWED_DELIVERY_ID":
+      return {
+        ...state,
+        currentlyViewedDeliveryId: action.payload,
+      };
     default:
       return state;
   }
@@ -239,7 +253,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
 const AppContext = createContext<{
   state: AppState;
-  dispatch: React.Dispatch<AppAction>;
+  dispatch: Dispatch<AppAction>;
   login: (driver: Driver, fec: FEC) => Promise<void>;
   logout: () => void;
   startDelivery: (deliveryId: number) => void;
@@ -256,6 +270,7 @@ const AppContext = createContext<{
     deliveries: Delivery[],
     currentLocation: Location
   ) => Promise<void>;
+  setViewedDeliveryId: (deliveryId: number | null) => void;
 }>({
   state: initialState,
   dispatch: () => null,
@@ -268,6 +283,7 @@ const AppContext = createContext<{
   stopJourneyTracking: () => {},
   logDeliveryEvent: () => {},
   setOptimizedRoute: async () => {},
+  setViewedDeliveryId: () => {},
 });
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -368,6 +384,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const setViewedDeliveryId = (deliveryId: number | null) => {
+    dispatch({ type: "SET_VIEWED_DELIVERY_ID", payload: deliveryId });
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -382,6 +402,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         stopJourneyTracking,
         logDeliveryEvent,
         setOptimizedRoute,
+        setViewedDeliveryId,
       }}
     >
       {children}

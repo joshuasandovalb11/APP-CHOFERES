@@ -231,6 +231,7 @@ export default function DashboardScreen() {
           ]}
         >
           <Text style={styles.clientName}>
+            {item.client?.client_id || "ID desconocido"} -{" "}
             {item.client?.name || "Cliente desconocido"}
           </Text>
           <View
@@ -364,6 +365,7 @@ export default function DashboardScreen() {
               <>
                 <View style={styles.activeDeliveryHeader}>
                   <Text style={styles.currentDeliveryText}>
+                    {deliveryToShow.client?.client_id || "ID desconocido"} -{" "}
                     {deliveryToShow.client?.name || "Cliente desconocido"}
                   </Text>
                   {tracking.isTimerActive && (
@@ -410,6 +412,7 @@ export default function DashboardScreen() {
               <>
                 <View style={styles.deliveryHeader}>
                   <Text style={styles.clientName}>
+                    {deliveryToShow.client?.client_id || "ID desconocido"} -{" "}
                     {deliveryToShow.client?.name || "Cliente desconocido"}
                   </Text>
                   <View
@@ -439,7 +442,7 @@ export default function DashboardScreen() {
                 </View>
                 <View style={styles.deliveryFooter}>
                   <Text style={[styles.deliveryId, { color: "#007AFF" }]}>
-                    # Cliente: {deliveryToShow.delivery_id}
+                    # Orden: {deliveryToShow.delivery_id}
                   </Text>
                   <FontAwesome name="chevron-right" size={20} color="#007AFF" />
                 </View>

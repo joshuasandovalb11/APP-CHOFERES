@@ -33,6 +33,7 @@ export default {
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
       ],
       edgeToEdgeEnabled: true,
       package: "com.erick.sandoval10.Appentregas",
@@ -44,6 +45,7 @@ export default {
     },
     plugins: [
       "expo-router",
+      "expo-notifications",
       [
         "expo-location",
         {
