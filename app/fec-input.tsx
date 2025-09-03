@@ -18,11 +18,16 @@ import locationService from "@/services/location"; // Importar LocationService
 export default function FECInputScreen() {
   const [fecNumber, setFecNumber] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  // Añadir setOptimizedRoute del contexto
   const { login, startJourneyTracking, setOptimizedRoute } = useApp();
   const router = useRouter();
   const params = useLocalSearchParams();
 
+  // Funcion para manejar cambios en el número FEC
+  const handleFECNumberChange = (text: string) => {
+    setFecNumber(text.replace(/[^0-9\s]/g, ""));
+  };
+
+  // Función para manejar el envío del número FEC
   const handleFECSubmit = async () => {
     if (!fecNumber.trim()) {
       Alert.alert("Error", "Por favor ingresa el número FEC");
@@ -34,8 +39,6 @@ export default function FECInputScreen() {
       const hasPermissions =
         await locationService.checkAndRequestLocationPermissions();
       if (!hasPermissions) {
-        // Si los permisos no están OK, detenemos todo. El usuario ya vio el
-        // modal explicativo desde nuestro servicio, así que no hay que hacer más.
         setIsLoading(false);
         return;
       }
@@ -46,7 +49,6 @@ export default function FECInputScreen() {
         const currentLocation = await locationService.getCurrentLocation();
 
         if (currentLocation && fecData.deliveries.length > 0) {
-          // Llamar a la función del contexto para obtener y guardar la ruta optimizada
           await setOptimizedRoute(fecData.deliveries, currentLocation);
         } else {
           console.log(
@@ -69,6 +71,7 @@ export default function FECInputScreen() {
     }
   };
 
+  // Funcion para manejar el botón de volver
   const handleBack = () => {
     router.back();
   };
@@ -93,7 +96,7 @@ export default function FECInputScreen() {
             value={fecNumber}
             // onChangeText={setFecNumber}
             onChangeText={(number: string) =>
-              setFecNumber(number.replace(/\s/g, ""))
+              handleFECNumberChange(number.replace(/\s/g, ""))
             }
             keyboardType="number-pad"
             returnKeyType="done"

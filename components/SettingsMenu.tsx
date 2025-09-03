@@ -13,6 +13,13 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import * as Notifications from "expo-notifications";
 import * as Location from "expo-location";
 import locationService from "@/services/location";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  runOnJS,
+} from "react-native-reanimated";
 
 const { width, height } = Dimensions.get("window");
 
@@ -28,13 +35,26 @@ export default function SettingsMenu({
   onClose,
   onLogoutPress,
 }: SettingsMenuProps) {
+  const [isModalVisible, setIsModalVisible] = useState(visible);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [locationEnabled, setLocationEnabled] = useState(false);
+  const offsetX = useSharedValue(-width); // Posición inicial del menú (fuera de la pantalla)
+  const overlayOpacity = useSharedValue(0); // Opacidad inicial del fondo oscuro
 
   // Este efecto se ejecuta cada vez que el menú se hace visible
   useEffect(() => {
     if (visible) {
+      setIsModalVisible(true);
+      offsetX.value = withSpring(0, { damping: 15 });
+      overlayOpacity.value = withTiming(1, { duration: 300 });
       checkCurrentPermissions();
+    } else {
+      offsetX.value = withTiming(-width * 0.8, { duration: 250 });
+      overlayOpacity.value = withTiming(0, { duration: 300 }, (finished) => {
+        if (finished) {
+          runOnJS(setIsModalVisible)(false);
+        }
+      });
     }
   }, [visible]);
 
@@ -53,10 +73,8 @@ export default function SettingsMenu({
   const handleNotificationsToggle = async () => {
     const { status } = await Notifications.getPermissionsAsync();
     if (status === "granted") {
-      // Si ya están concedidos, el switch solo puede llevar a configuración para desactivarlos
       Linking.openSettings();
     } else {
-      // Si no están concedidos, pedimos permiso
       const { status: newStatus } =
         await Notifications.requestPermissionsAsync();
       setNotificationsEnabled(newStatus === "granted");
@@ -65,66 +83,83 @@ export default function SettingsMenu({
 
   // Manejador para el switch de ubicación
   const handleLocationToggle = async () => {
-    // Usamos nuestra función inteligente que ya creamos en el servicio
-    // Esta función ya muestra el modal correcto si es necesario
     const permissionsOk =
       await locationService.checkAndRequestLocationPermissions();
     setLocationEnabled(permissionsOk);
   };
 
+  // Funcion para manejar el cierre de sesión
   const handleLogoutPress = () => {
     onClose();
     onLogoutPress();
   };
 
+  const animatedMenuContainerStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ translateX: offsetX.value }],
+    };
+  });
+
+  const animatedOverlayStyle = useAnimatedStyle(() => {
+    return {
+      opacity: overlayOpacity.value,
+    };
+  });
+
+  if (!isModalVisible) {
+    return null;
+  }
+
   return (
     <Modal
-      visible={visible}
+      visible={isModalVisible}
       transparent={true}
-      animationType="fade"
+      animationType="none"
       onRequestClose={onClose}
     >
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <View style={styles.menuContainer}>
-          <Text style={styles.title}>Configuración</Text>
+      <Animated.View style={[styles.overlay, animatedOverlayStyle]}>
+        <TouchableOpacity
+          style={styles.touchableOverlay}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+      </Animated.View>
 
-          <View style={styles.optionRow}>
-            <FontAwesome name="bell" size={20} color="#333" />
-            <Text style={styles.optionText}>Notificaciones</Text>
-            <Switch
-              value={notificationsEnabled}
-              onValueChange={handleNotificationsToggle}
-              trackColor={{ false: "#767577", true: "#81b0ff" }}
-              thumbColor={notificationsEnabled ? "#007AFF" : "#f4f3f4"}
-            />
-          </View>
+      <Animated.View style={[styles.menuContainer, animatedMenuContainerStyle]}>
+        <Text style={styles.title}>Configuración</Text>
 
-          <View style={styles.optionRow}>
-            <FontAwesome name="location-arrow" size={22} color="#333" />
-            <Text style={styles.optionText}> Permisos de Ubicación</Text>
-            <Switch
-              value={locationEnabled}
-              onValueChange={handleLocationToggle}
-              trackColor={{ false: "#767577", true: "#81b0ff" }}
-              thumbColor={locationEnabled ? "#007AFF" : "#f4f3f4"}
-            />
-          </View>
-
-          <View style={styles.separator} />
-
-          <TouchableOpacity
-            style={styles.logoutButton}
-            onPress={handleLogoutPress}
-          >
-            <FontAwesome name="sign-out" size={20} color="#FF3B30" />
-            <Text style={styles.logoutButtonText}>Cerrar Sesión</Text>
-          </TouchableOpacity>
+        <View style={styles.optionRow}>
+          <FontAwesome name="bell" size={20} color="#333" />
+          <Text style={styles.optionText}>Notificaciones</Text>
+          <Switch
+            value={notificationsEnabled}
+            onValueChange={handleNotificationsToggle}
+            trackColor={{ false: "#767577", true: "#81b0ff" }}
+            thumbColor={notificationsEnabled ? "#007AFF" : "#f4f3f4"}
+          />
         </View>
-      </TouchableOpacity>
+
+        <View style={styles.optionRow}>
+          <FontAwesome name="location-arrow" size={22} color="#333" />
+          <Text style={styles.optionText}> Permisos de Ubicación</Text>
+          <Switch
+            value={locationEnabled}
+            onValueChange={handleLocationToggle}
+            trackColor={{ false: "#767577", true: "#81b0ff" }}
+            thumbColor={locationEnabled ? "#007AFF" : "#f4f3f4"}
+          />
+        </View>
+
+        <View style={styles.separator} />
+
+        <TouchableOpacity
+          style={styles.logoutButton}
+          onPress={handleLogoutPress}
+        >
+          <FontAwesome name="sign-out" size={25} color="#FF3B30" />
+          <Text style={styles.logoutButtonText}>Cerrar Sesión</Text>
+        </TouchableOpacity>
+      </Animated.View>
     </Modal>
   );
 }
@@ -133,11 +168,17 @@ export default function SettingsMenu({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: "rgba(58, 58, 58, 0.5)",
+  },
+  touchableOverlay: {
+    flex: 1,
   },
   menuContainer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
     height: height,
-    width: width * 0.8, // Ocupa el 80% del ancho
+    width: width * 0.8,
     backgroundColor: "white",
     paddingTop: 40,
     paddingHorizontal: 20,
@@ -172,7 +213,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     position: "absolute",
-    bottom: 80,
+    bottom: 40,
     left: 20,
     padding: 10,
   },

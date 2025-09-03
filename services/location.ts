@@ -11,16 +11,13 @@ export class LocationService {
    * @returns {Promise<boolean>} Devuelve true si todos los permisos necesarios están concedidos.
    */
   async checkAndRequestLocationPermissions(): Promise<boolean> {
-    // 1. Verificar permisos en primer plano (mientras se usa la app)
     let { status: foregroundStatus } =
       await Location.getForegroundPermissionsAsync();
     if (foregroundStatus !== "granted") {
-      // Si no están concedidos, los pedimos formalmente
       const { status } = await Location.requestForegroundPermissionsAsync();
       foregroundStatus = status;
     }
 
-    // Si después de pedirlos, el permiso de primer plano sigue denegado, es un bloqueo total.
     if (foregroundStatus !== "granted") {
       Alert.alert(
         "Permisos Requeridos",
@@ -30,11 +27,9 @@ export class LocationService {
       return false;
     }
 
-    // 2. Si el primer plano está OK, verificamos el segundo plano (crucial para notificaciones)
     let { status: backgroundStatus } =
       await Location.getBackgroundPermissionsAsync();
     if (backgroundStatus !== "granted") {
-      // Si está denegado, es vital explicar por qué lo necesitamos y facilitar la solución.
       await new Promise((resolve) =>
         Alert.alert(
           "Permiso Adicional Necesario",
@@ -48,29 +43,28 @@ export class LocationService {
             {
               text: "Ir a Configuración",
               onPress: async () => {
-                await Linking.openSettings(); // ¡Magia! Abre la config de la app
+                await Linking.openSettings();
                 resolve(true);
               },
             },
           ]
         )
       );
-      // Damos la oportunidad de que el usuario haya cambiado el permiso y volvemos a comprobar
       const { status: newBackgroundStatus } =
         await Location.getBackgroundPermissionsAsync();
       return newBackgroundStatus === "granted";
     }
 
-    // Si llegamos aquí, ¡todos los permisos están en orden!
     return true;
   }
 
+  // Funcion para OBTENER la ubicación actual
   async getCurrentLocation(): Promise<LocationType | null> {
     try {
       const hasPermission = await this.checkAndRequestLocationPermissions();
       if (!hasPermission) {
         console.log("Obtención de ubicación cancelada por falta de permisos.");
-        return null; // Si no hay permisos, no continuamos.
+        return null;
       }
 
       const location = await Location.getCurrentPositionAsync({
@@ -87,6 +81,7 @@ export class LocationService {
     }
   }
 
+  // Funcion para INICIAR el seguimiento de la ubicación
   async startLocationTracking(
     callback: (location: LocationType) => void
   ): Promise<boolean> {
@@ -117,6 +112,7 @@ export class LocationService {
     }
   }
 
+  // Funcion para DETENER el seguimiento de la ubicación
   stopLocationTracking(): void {
     if (this.watchId) {
       this.watchId.remove();
@@ -124,8 +120,9 @@ export class LocationService {
     }
   }
 
+  // Funcion para calcular la distancia entre dos puntos
   calculateDistance(point1: LocationType, point2: LocationType): number {
-    const R = 6371e3; // Radio de la Tierra en metros
+    const R = 6371e3;
     const φ1 = (point1.latitude * Math.PI) / 180;
     const φ2 = (point2.latitude * Math.PI) / 180;
     const Δφ = ((point2.latitude - point1.latitude) * Math.PI) / 180;
@@ -136,9 +133,10 @@ export class LocationService {
       Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-    return R * c; // Distancia en metros
+    return R * c;
   }
 
+  // Funcion para abrir Google Maps con navegación
   async openGoogleMaps(
     destination: LocationType,
     origin?: LocationType
@@ -187,6 +185,7 @@ export class LocationService {
     }
   }
 
+  // Funcion para obtener la dirección a partir de coordenadas
   async getAddressFromCoordinates(location: LocationType): Promise<string> {
     try {
       const addresses = await Location.reverseGeocodeAsync(location);
@@ -209,6 +208,7 @@ export class LocationService {
     }
   }
 
+  // Funcion para ordenar entregas por proximidad
   sortDeliveriesByProximity<
     T extends { client?: { gps_location: string }; distance?: number }
   >(deliveries: T[], currentLocation: LocationType): T[] {
@@ -225,6 +225,7 @@ export class LocationService {
     return deliveriesWithDistance.sort((a, b) => a.distance - b.distance);
   }
 
+  // Funcion para parsear la ubicación GPS desde string
   private parseGPSLocation(gpsLocation: string): LocationType | null {
     try {
       if (!gpsLocation || !gpsLocation.includes(",")) return null;
@@ -240,5 +241,4 @@ export class LocationService {
 }
 
 const locationService = new LocationService();
-// Y la exportamos como la exportación por defecto del archivo
 export default locationService;
