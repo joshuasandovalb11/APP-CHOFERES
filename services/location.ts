@@ -5,33 +5,72 @@ import { Location as LocationType } from "../types";
 export class LocationService {
   private watchId: Location.LocationSubscription | null = null;
 
-  async requestPermissions(): Promise<boolean> {
-    try {
-      const { status: foregroundStatus } =
-        await Location.requestForegroundPermissionsAsync();
-      if (foregroundStatus !== "granted") {
-        const { status: backgroundStatus } =
-          await Location.requestBackgroundPermissionsAsync();
-        if (backgroundStatus !== "granted") {
-          Alert.alert(
-            "Permisos insuficientes",
-            "La aplicación necesita permisos de ubicación para funcionar correctamente."
-          );
-          return false;
-        }
-      }
-      return true;
-    } catch (error) {
-      console.error("Error requesting location permissions:", error);
+  /**
+   * Verifica y solicita permisos de ubicación de forma inteligente.
+   * Guía al usuario si necesita ir a la configuración.
+   * @returns {Promise<boolean>} Devuelve true si todos los permisos necesarios están concedidos.
+   */
+  async checkAndRequestLocationPermissions(): Promise<boolean> {
+    // 1. Verificar permisos en primer plano (mientras se usa la app)
+    let { status: foregroundStatus } =
+      await Location.getForegroundPermissionsAsync();
+    if (foregroundStatus !== "granted") {
+      // Si no están concedidos, los pedimos formalmente
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      foregroundStatus = status;
+    }
+
+    // Si después de pedirlos, el permiso de primer plano sigue denegado, es un bloqueo total.
+    if (foregroundStatus !== "granted") {
+      Alert.alert(
+        "Permisos Requeridos",
+        "Esta aplicación necesita acceso a tu ubicación para poder funcionar. Por favor, habilita los permisos.",
+        [{ text: "OK" }]
+      );
       return false;
     }
+
+    // 2. Si el primer plano está OK, verificamos el segundo plano (crucial para notificaciones)
+    let { status: backgroundStatus } =
+      await Location.getBackgroundPermissionsAsync();
+    if (backgroundStatus !== "granted") {
+      // Si está denegado, es vital explicar por qué lo necesitamos y facilitar la solución.
+      await new Promise((resolve) =>
+        Alert.alert(
+          "Permiso Adicional Necesario",
+          "Para el seguimiento de ruta y las notificaciones de proximidad, la app necesita tu permiso para acceder a la ubicación 'todo el tiempo'.\n\nPor favor, pulsa 'Ir a Configuración' y selecciona la opción 'Permitir todo el tiempo'.",
+          [
+            {
+              text: "Ahora no",
+              style: "cancel",
+              onPress: () => resolve(false),
+            },
+            {
+              text: "Ir a Configuración",
+              onPress: async () => {
+                await Linking.openSettings(); // ¡Magia! Abre la config de la app
+                resolve(true);
+              },
+            },
+          ]
+        )
+      );
+      // Damos la oportunidad de que el usuario haya cambiado el permiso y volvemos a comprobar
+      const { status: newBackgroundStatus } =
+        await Location.getBackgroundPermissionsAsync();
+      return newBackgroundStatus === "granted";
+    }
+
+    // Si llegamos aquí, ¡todos los permisos están en orden!
+    return true;
   }
 
   async getCurrentLocation(): Promise<LocationType | null> {
     try {
-      const hasPermission = await this.requestPermissions();
+      const hasPermission = await this.checkAndRequestLocationPermissions();
       if (!hasPermission) {
-        throw new Error("No hay permisos de ubicación");
+        console.log("Obtención de ubicación cancelada por falta de permisos.");
+        return null; // Si no hay permisos, no continuamos.
       }
 
       const location = await Location.getCurrentPositionAsync({
@@ -52,7 +91,7 @@ export class LocationService {
     callback: (location: LocationType) => void
   ): Promise<boolean> {
     try {
-      const hasPermission = await this.requestPermissions();
+      const hasPermission = await this.checkAndRequestLocationPermissions();
       if (!hasPermission) {
         return false;
       }
@@ -200,4 +239,6 @@ export class LocationService {
   }
 }
 
-export default new LocationService();
+const locationService = new LocationService();
+// Y la exportamos como la exportación por defecto del archivo
+export default locationService;

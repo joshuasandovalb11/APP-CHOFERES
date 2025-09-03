@@ -14,6 +14,7 @@ import { useApp } from "@/context/AppContext";
 import LocationService from "@/services/location";
 import { useDeliveryTracking } from "@/hooks/useDeliveryTracking";
 import { Delivery } from "@/types";
+import SettingsMenu from "@/components/SettingsMenu";
 
 export default function DashboardScreen() {
   const { state, logout, dispatch } = useApp();
@@ -31,6 +32,8 @@ export default function DashboardScreen() {
 
   const TIME_UNTIL_WARNING = 1 * 60 * 1000;
   const LOGOUT_COUNTDOWN = 30 * 1000;
+
+  const [isMenuVisible, setMenuVisible] = useState(false);
 
   // Limpia y cancela los temporizadores de cierre de sesión.
   const cleanupTimers = () => {
@@ -267,7 +270,7 @@ export default function DashboardScreen() {
                 { backgroundColor: innerViewBackgroundColor },
               ]}
             >
-              <FontAwesome name="map-marker" size={20} color="#007AFF" />
+              <FontAwesome name="location-arrow" size={20} color="#007AFF" />
               <Text style={styles.infoText}>
                 Distancia: {formatDistance(item.distance)}
               </Text>
@@ -329,6 +332,11 @@ export default function DashboardScreen() {
 
   return (
     <View style={styles.container}>
+      <SettingsMenu
+        visible={isMenuVisible}
+        onClose={() => setMenuVisible(false)}
+        onLogoutPress={handleLogout}
+      />
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerInfo}>
@@ -338,8 +346,8 @@ export default function DashboardScreen() {
           </Text>
           <Text style={styles.fecInfo}>FEC: {state.currentFEC.fec_number}</Text>
         </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-          <FontAwesome name="sign-out" size={25} color="#ff0019ff" />
+        <TouchableOpacity onPress={() => setMenuVisible(true)}>
+          <FontAwesome name="bars" size={25} color="#007AFF" />
         </TouchableOpacity>
       </View>
 
@@ -434,7 +442,11 @@ export default function DashboardScreen() {
                     </Text>
                   </View>
                   <View style={styles.infoRow}>
-                    <FontAwesome name="map-marker" size={20} color="#007AFF" />
+                    <FontAwesome
+                      name="location-arrow"
+                      size={20}
+                      color="#007AFF"
+                    />
                     <Text style={styles.infoText}>
                       Distancia: {formatDistance(deliveryToShow.distance)}
                     </Text>

@@ -22,6 +22,7 @@ import * as Device from "expo-device";
 
 import { useColorScheme } from "@/components/useColorScheme";
 import { AppProvider, useApp } from "@/context/AppContext";
+import locationService from "@/services/location";
 
 const GEOFENCING_TASK = "geofencing-task";
 
@@ -86,11 +87,7 @@ export default function RootLayout() {
   useEffect(() => {
     const setupApp = async () => {
       // Pedir permisos de ubicación (foreground y background)
-      const { status: foregroundStatus } =
-        await Location.requestForegroundPermissionsAsync();
-      if (foregroundStatus === "granted") {
-        await Location.requestBackgroundPermissionsAsync();
-      }
+      await locationService.checkAndRequestLocationPermissions();
 
       // Pedir permisos de notificación
       await Notifications.requestPermissionsAsync();

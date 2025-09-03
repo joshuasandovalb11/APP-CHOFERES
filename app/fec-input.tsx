@@ -13,7 +13,7 @@ import { Text, View } from "@/components/Themed";
 import { useApp } from "@/context/AppContext";
 import { mockApiService } from "@/services/api";
 import { Driver } from "@/types";
-import LocationService from "@/services/location"; // Importar LocationService
+import locationService from "@/services/location"; // Importar LocationService
 
 export default function FECInputScreen() {
   const [fecNumber, setFecNumber] = useState("");
@@ -31,11 +31,19 @@ export default function FECInputScreen() {
 
     setIsLoading(true);
     try {
+      const hasPermissions =
+        await locationService.checkAndRequestLocationPermissions();
+      if (!hasPermissions) {
+        // Si los permisos no están OK, detenemos todo. El usuario ya vio el
+        // modal explicativo desde nuestro servicio, así que no hay que hacer más.
+        setIsLoading(false);
+        return;
+      }
       const driver: Driver = JSON.parse(params.driverData as string);
       const fecData = await mockApiService.getDeliveriesByFEC(fecNumber);
 
       try {
-        const currentLocation = await LocationService.getCurrentLocation();
+        const currentLocation = await locationService.getCurrentLocation();
 
         if (currentLocation && fecData.deliveries.length > 0) {
           // Llamar a la función del contexto para obtener y guardar la ruta optimizada
@@ -83,7 +91,10 @@ export default function FECInputScreen() {
             style={styles.input}
             placeholder="Número FEC"
             value={fecNumber}
-            onChangeText={setFecNumber}
+            // onChangeText={setFecNumber}
+            onChangeText={(number: string) =>
+              setFecNumber(number.replace(/\s/g, ""))
+            }
             keyboardType="number-pad"
             returnKeyType="done"
           />

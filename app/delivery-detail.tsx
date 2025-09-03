@@ -507,7 +507,7 @@ export default function DeliveryDetailScreen() {
               </Text>
             </View>
             <View style={styles.infoRow}>
-              <FontAwesome name="asterisk" size={20} color="#007AFF" />
+              <FontAwesome name="info-circle" size={20} color="#007AFF" />
               <Text style={styles.infoLabel}>No. Cliente:</Text>
               <Text style={styles.infoValue}>
                 {delivery.client?.client_id || "N/A"}
@@ -608,7 +608,7 @@ export default function DeliveryDetailScreen() {
               style={[styles.actionButton, styles.navigateButton]}
               onPress={handleNavigate}
             >
-              <FontAwesome name="map-marker" size={20} color="white" />
+              <FontAwesome name="location-arrow" size={20} color="white" />
               <Text style={styles.actionButtonText}>Navegar</Text>
             </TouchableOpacity>
             <TouchableOpacity
