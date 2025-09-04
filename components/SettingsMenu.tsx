@@ -28,12 +28,14 @@ interface SettingsMenuProps {
   visible: boolean;
   onClose: () => void;
   onLogoutPress: () => void;
+  isOffline: boolean;
 }
 
 export default function SettingsMenu({
   visible,
   onClose,
   onLogoutPress,
+  isOffline,
 }: SettingsMenuProps) {
   const [isModalVisible, setIsModalVisible] = useState(visible);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
@@ -129,6 +131,19 @@ export default function SettingsMenu({
         <Text style={styles.title}>Configuración</Text>
 
         <View style={styles.optionRow}>
+          <FontAwesome name="wifi" size={18} color="#333" />
+          <Text style={styles.optionText}>Estado de la Red</Text>
+          <Text
+            style={[
+              styles.statusText,
+              isOffline ? styles.offlineText : styles.onlineText,
+            ]}
+          >
+            {isOffline ? "Offline" : "Online"}
+          </Text>
+        </View>
+
+        <View style={styles.optionRow}>
           <FontAwesome name="bell" size={20} color="#333" />
           <Text style={styles.optionText}>Notificaciones</Text>
           <Switch
@@ -168,7 +183,7 @@ export default function SettingsMenu({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(58, 58, 58, 0.5)",
+    backgroundColor: "rgba(94, 93, 93, 0.5)",
   },
   touchableOverlay: {
     flex: 1,
@@ -222,5 +237,15 @@ const styles = StyleSheet.create({
     color: "#FF3B30",
     marginLeft: 15,
     fontWeight: "bold",
+  },
+  statusText: {
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  onlineText: {
+    color: "#34C759", // Verde iOS
+  },
+  offlineText: {
+    color: "#FF3B30", // Rojo iOS (igual que el de logout)
   },
 });

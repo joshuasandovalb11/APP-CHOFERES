@@ -17,7 +17,7 @@ import { Delivery } from "@/types";
 import SettingsMenu from "@/components/SettingsMenu";
 
 export default function DashboardScreen() {
-  const { state, logout, dispatch } = useApp();
+  const { state, logout, dispatch, isOffline } = useApp();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedTab, setSelectedTab] = useState(0);
   const tracking = useDeliveryTracking();
@@ -336,6 +336,7 @@ export default function DashboardScreen() {
         visible={isMenuVisible}
         onClose={() => setMenuVisible(false)}
         onLogoutPress={handleLogout}
+        isOffline={isOffline}
       />
       {/* Header */}
       <View style={styles.header}>

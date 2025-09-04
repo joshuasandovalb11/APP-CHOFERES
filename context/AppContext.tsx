@@ -4,7 +4,11 @@ import React, {
   useReducer,
   ReactNode,
   Dispatch,
+  useRef,
+  useEffect,
+  useState,
 } from "react";
+import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   AuthState,
@@ -17,6 +21,7 @@ import {
 } from "../types";
 import LocationService from "@/services/location";
 import googleMapsService from "@/services/googleMapsService";
+import * as Notifications from "expo-notifications";
 
 interface AppState extends AuthState {
   deliveryStatus: {
@@ -36,6 +41,12 @@ interface AppState extends AuthState {
     trackingPoints: TrackingPoint[];
   };
   currentlyViewedDeliveryId: number | null;
+}
+
+interface OfflineEvent {
+  type: "start_delivery" | "complete_delivery" | "log_event";
+  payload: any;
+  timestamp: number;
 }
 
 type AppAction =
@@ -253,6 +264,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
 const AppContext = createContext<{
   state: AppState;
+  isOffline: boolean;
   dispatch: Dispatch<AppAction>;
   login: (driver: Driver, fec: FEC) => Promise<void>;
   logout: () => void;
@@ -273,6 +285,7 @@ const AppContext = createContext<{
   setViewedDeliveryId: (deliveryId: number | null) => void;
 }>({
   state: initialState,
+  isOffline: false,
   dispatch: () => null,
   login: async () => {},
   logout: () => {},
@@ -288,7 +301,87 @@ const AppContext = createContext<{
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
+  const [isOffline, setIsOffline] = useState(false);
+  const isOfflineRef = useRef(isOffline);
+  const lastNotificationTimestampRef = useRef(0);
 
+  useEffect(() => {
+    isOfflineRef.current = isOffline; // Mantenemos la ref actualizada
+  }, [isOffline]);
+
+  // EFECTO PARA ESCUCHAR EL ESTADO DE LA RED
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((netInfoState) => {
+      const newOfflineState = !(
+        netInfoState.isConnected && netInfoState.isInternetReachable
+      );
+      setIsOffline(newOfflineState);
+
+      // Si ANTES estábamos online y AHORA estamos offline, enviamos notificación.
+      if (!isOfflineRef.current && newOfflineState) {
+        const now = Date.now();
+        if (now - lastNotificationTimestampRef.current > 10000) {
+          console.log("Conexión perdida. Entrando a modo offline.");
+          Notifications.scheduleNotificationAsync({
+            content: {
+              title: "Modo Offline Activado",
+              body: "Has perdido la conexión. Tus acciones se guardarán y se sincronizarán cuando vuelvas a estar en línea.",
+            },
+            trigger: null,
+          });
+          lastNotificationTimestampRef.current = now;
+        }
+      }
+
+      // Si vuelve a tener conexión y había eventos pendientes, sincroniza
+      if (isOfflineRef.current && !newOfflineState) {
+        console.log("Conexión restaurada. Sincronizando eventos pendientes...");
+        syncOfflineQueue();
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // FUNCIÓN PARA GUARDAR UN EVENTO EN LA COLA
+  const addEventToQueue = async (event: OfflineEvent) => {
+    try {
+      const queueJson = await AsyncStorage.getItem("offlineQueue");
+      const queue: OfflineEvent[] = queueJson ? JSON.parse(queueJson) : [];
+      queue.push(event);
+      await AsyncStorage.setItem("offlineQueue", JSON.stringify(queue));
+      console.log("Evento añadido a la cola offline:", event);
+    } catch (error) {
+      console.error("Error guardando evento en la cola:", error);
+    }
+  };
+
+  // FUNCIÓN PARA SINCRONIZAR LA COLA CON EL SERVIDOR
+  const syncOfflineQueue = async () => {
+    const queueJson = await AsyncStorage.getItem("offlineQueue");
+    if (!queueJson) return;
+
+    const queue: OfflineEvent[] = JSON.parse(queueJson);
+    if (queue.length === 0) return;
+
+    console.log(`Sincronizando ${queue.length} eventos pendientes...`);
+
+    // Aquí iría la lógica para enviar cada evento al servidor.
+    // Es importante que el backend pueda recibir estos eventos,
+    // posiblemente en un endpoint que acepte un array de eventos.
+    try {
+      // Ejemplo: await apiService.syncEvents(queue);
+
+      // Si la sincronización es exitosa, limpia la cola
+      await AsyncStorage.removeItem("offlineQueue");
+      console.log("Sincronización completada. Cola limpiada.");
+    } catch (error) {
+      console.error("Fallo la sincronización de eventos:", error);
+      // Opcional: Implementar lógica de reintentos
+    }
+  };
+
+  // Función para manejar el inicio de sesión
   const login = async (driver: Driver, fec: FEC) => {
     dispatch({ type: "LOGIN", payload: { driver, fec } });
     await AsyncStorage.setItem("driverData", JSON.stringify(driver));
@@ -301,6 +394,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "LOGOUT" });
   };
 
+  // Funcion para actualizar la ubicación actual
   const updateLocation = async (location?: Location) => {
     if (location) {
       dispatch({ type: "SET_LOCATION", payload: location });
@@ -312,16 +406,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const startDelivery = (deliveryId: number) => {
+  // Funcion para iniciar una entrega
+  const startDelivery = async (deliveryId: number) => {
+    if (isOffline) {
+      // Si está offline, guarda el evento en la cola
+      const event: OfflineEvent = {
+        type: "start_delivery",
+        payload: { deliveryId },
+        timestamp: Date.now(),
+      };
+      await addEventToQueue(event);
+      // Actualiza el estado local para que el usuario vea el cambio (actualización optimista)
+      dispatch({ type: "START_DELIVERY", payload: deliveryId });
+      dispatch({ type: "START_TIMER", payload: new Date().toISOString() });
+      return;
+    }
+    // Si está online, ejecuta la lógica original (llamar a tu API, etc.)
     dispatch({ type: "START_DELIVERY", payload: deliveryId });
     dispatch({ type: "START_TIMER", payload: new Date().toISOString() });
   };
 
-  const completeDelivery = (deliveryId: number) => {
+  // Funcion para completar una entrega
+  const completeDelivery = async (deliveryId: number) => {
+    if (isOffline) {
+      const event: OfflineEvent = {
+        type: "complete_delivery",
+        payload: { deliveryId },
+        timestamp: Date.now(),
+      };
+      await addEventToQueue(event);
+      dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
+      dispatch({ type: "STOP_TIMER" });
+      return;
+    }
     dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
     dispatch({ type: "STOP_TIMER" });
   };
 
+  // Funcion para iniciar el seguimiento del viaje
   const startJourneyTracking = () => {
     dispatch({ type: "START_JOURNEY_TRACKING" });
     LocationService.startLocationTracking((location) => {
@@ -334,16 +456,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  // Función para detener el seguimiento del viaje
   const stopJourneyTracking = () => {
     LocationService.stopLocationTracking();
     dispatch({ type: "STOP_JOURNEY_TRACKING" });
   };
 
-  const logDeliveryEvent = (
+  // Función para registrar un evento de entrega
+  const logDeliveryEvent = async (
     eventType: TrackingEventType,
     deliveryId: number,
     location: Location
   ) => {
+    if (isOffline) {
+      const event: OfflineEvent = {
+        type: "log_event",
+        payload: { eventType, deliveryId, location },
+        timestamp: Date.now(),
+      };
+      await addEventToQueue(event);
+      return;
+    }
     const eventPoint: TrackingPoint = {
       ...location,
       timestamp: new Date().toISOString(),
@@ -353,6 +486,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "ADD_TRACKING_POINT", payload: eventPoint });
   };
 
+  // Funcion para establecer la ruta optimizada
   const setOptimizedRoute = async (
     deliveries: Delivery[],
     currentLocation: Location
@@ -384,6 +518,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Funcion para establecer el ID de entrega visto
   const setViewedDeliveryId = (deliveryId: number | null) => {
     dispatch({ type: "SET_VIEWED_DELIVERY_ID", payload: deliveryId });
   };
@@ -392,6 +527,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         state,
+        isOffline,
         dispatch,
         login,
         logout,
