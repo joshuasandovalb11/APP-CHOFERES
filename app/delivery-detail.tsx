@@ -423,7 +423,7 @@ export default function DeliveryDetailScreen() {
   ): keyof typeof FontAwesome.glyphMap => {
     switch (status) {
       case "pending":
-        return "clock-o";
+        return "history";
       case "in_progress":
         return "truck";
       case "completed":

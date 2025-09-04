@@ -145,29 +145,39 @@ function RootLayoutNav() {
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(
       (response) => {
-        const notificationDeliveryId = response.notification.request.content
-          .data.deliveryId as number | undefined;
+        const data = response.notification.request.content.data;
 
-        // Obtenemos el ID actual desde la referencia de nuestro estado global
-        const currentlyViewedDeliveryId =
-          appStateRef.current.currentlyViewedDeliveryId;
-
-        if (
-          notificationDeliveryId &&
-          notificationDeliveryId === currentlyViewedDeliveryId
-        ) {
-          return; // No navegamos
+        if (data && data.type === "logout_warning") {
+          return;
         }
 
-        if (notificationDeliveryId) {
-          router.push(`/delivery-detail?deliveryId=${notificationDeliveryId}`);
+        if (data && data.deliveryId) {
+          const notificationDeliveryId = response.notification.request.content
+            .data.deliveryId as number | undefined;
+
+          const currentlyViewedDeliveryId =
+            appStateRef.current.currentlyViewedDeliveryId;
+
+          if (
+            notificationDeliveryId &&
+            notificationDeliveryId === currentlyViewedDeliveryId
+          ) {
+            return;
+          }
+
+          if (notificationDeliveryId) {
+            router.push(
+              `/delivery-detail?deliveryId=${notificationDeliveryId}`
+            );
+          }
         }
       }
     );
 
     return () => subscription.remove();
-  }, [router]); // La dependencia es solo el router
+  }, [router]);
 
+  // useEffect para proteger las rutas
   useEffect(() => {
     const isProtectedRoute =
       pathname.startsWith("/dashboard") ||

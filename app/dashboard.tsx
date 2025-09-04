@@ -15,6 +15,7 @@ import LocationService from "@/services/location";
 import { useDeliveryTracking } from "@/hooks/useDeliveryTracking";
 import { Delivery } from "@/types";
 import SettingsMenu from "@/components/SettingsMenu";
+import * as Notifications from "expo-notifications";
 
 export default function DashboardScreen() {
   const { state, logout, dispatch, isOffline } = useApp();
@@ -55,6 +56,16 @@ export default function DashboardScreen() {
       startFinalLogoutCountdown,
       LOGOUT_COUNTDOWN
     );
+    Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Cierre de sesión automático en progreso",
+        body: "Tu sesión se cerrará en 30 segundos a menos que la canceles.",
+        sound: "default",
+        vibrate: [0, 250, 250, 250],
+        data: { type: "logout_warning" },
+      },
+      trigger: null,
+    });
   };
 
   // Inicia el temporizador principal para el cierre de sesión automático.
@@ -76,7 +87,6 @@ export default function DashboardScreen() {
     return () => cleanupTimers();
   }, [state.deliveryStatus]);
 
-  // Obtiene la ubicación inicial al cargar.
   useEffect(() => {
     initializeLocation();
   }, []);
