@@ -14,7 +14,8 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Text, View } from "@/components/Themed";
 import { useApp } from "@/context/AppContext";
 import LocationService from "@/services/location";
-import { Delivery, Location } from "@/types";
+import { Delivery, Location, IncidentReason } from "@/types";
+import IncidentModal from "@/components/IncidentModal";
 import MapView, { Marker } from "react-native-maps";
 import * as Notifications from "expo-notifications";
 import * as ExpoLocation from "expo-location";
@@ -42,8 +43,10 @@ export default function DeliveryDetailScreen() {
     updateLocation,
     logDeliveryEvent,
     setViewedDeliveryId,
+    reportIncident,
   } = useApp();
   const [delivery, setDelivery] = useState<Delivery | null>(null);
+  const [isIncidentModalVisible, setIncidentModalVisible] = useState(false);
   const [destinationLocation, setDestinationLocation] =
     useState<Location | null>(null);
   const [distance, setDistance] = useState<string>("");
@@ -73,6 +76,48 @@ export default function DeliveryDetailScreen() {
       setViewedDeliveryId(null);
     };
   }, [params.deliveryId]);
+
+  const handleReportIncident = async (
+    reason: IncidentReason,
+    notes?: string
+  ) => {
+    if (delivery) {
+      const isActiveDelivery =
+        state.deliveryStatus.currentDelivery?.delivery_id ===
+        delivery.delivery_id;
+
+      // Si es la entrega activa, entonces debemos limpiar su notificación persistente.
+      if (isActiveDelivery) {
+        // Llamamos a la misma función de limpieza que se usa al completar una entrega.
+        await stopNotificationsAndGeofencing();
+      }
+      // Llama a la función del contexto para registrar la incidencia
+      reportIncident(delivery.delivery_id, reason, notes);
+      // Cierra el modal
+      setIncidentModalVisible(false);
+      // Regresa al dashboard, ya que esta entrega ya no está activa
+      router.back();
+    }
+  };
+
+  // Funcion para mandar a llamar la app de telefono
+  const handleCallClient = (deliveryId: number) => {
+    const delivery =
+      state.deliveryStatus.nextDeliveries.find(
+        (d) => d.delivery_id === deliveryId
+      ) ||
+      state.deliveryStatus.completedDeliveries.find(
+        (d) => d.delivery_id === deliveryId
+      ) ||
+      state.deliveryStatus.cancelledDeliveries.find(
+        (d) => d.delivery_id === deliveryId
+      ) ||
+      state.currentFEC?.deliveries.find((d) => d.delivery_id === deliveryId);
+    if (delivery) {
+      let phoneUrl = `tel:${delivery.client?.phone}`;
+      Linking.openURL(phoneUrl);
+    }
+  };
 
   // FUNCIÓN PARA MOSTRAR LA NOTIFICACIÓN PERSISTENTE
   const showOngoingDeliveryNotification = async (deliveryId: number) => {
@@ -127,6 +172,13 @@ export default function DeliveryDetailScreen() {
     );
     if (completedDelivery) {
       setDelivery(completedDelivery);
+      return true;
+    }
+    const cancelledDelivery = state.currentFEC?.deliveries.find(
+      (d) => d.delivery_id === deliveryId
+    );
+    if (cancelledDelivery) {
+      setDelivery(cancelledDelivery);
       return true;
     }
     return false;
@@ -398,6 +450,8 @@ export default function DeliveryDetailScreen() {
         return "#007AFF";
       case "completed":
         return "#28A745";
+      case "cancelled":
+        return "#DC3545";
       default:
         return "#6C757D";
     }
@@ -412,6 +466,8 @@ export default function DeliveryDetailScreen() {
         return "En Progreso";
       case "completed":
         return "Completada";
+      case "cancelled":
+        return "Cancelada";
       default:
         return "Desconocido";
     }
@@ -428,6 +484,8 @@ export default function DeliveryDetailScreen() {
         return "truck";
       case "completed":
         return "check-circle-o";
+      case "cancelled":
+        return "warning";
       default:
         return "question-circle";
     }
@@ -463,7 +521,17 @@ export default function DeliveryDetailScreen() {
           <FontAwesome name="chevron-left" size={20} color="#007AFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Detalle de Entrega</Text>
-        <View style={styles.headerSpacer} />
+        {/* <View style={styles.headerSpacer} /> */}
+        {delivery &&
+          delivery.status !== "completed" &&
+          delivery.status !== "cancelled" && (
+            <TouchableOpacity
+              onPress={() => setIncidentModalVisible(true)}
+              style={styles.headerButton}
+            >
+              <FontAwesome name="warning" size={20} color="#FF3B30" />
+            </TouchableOpacity>
+          )}
       </View>
 
       {/* SECCION DE INFORMACION */}
@@ -495,6 +563,38 @@ export default function DeliveryDetailScreen() {
           </View>
         </View>
 
+        {/* --- BLOQUE PARA MOSTRAR INCIDENCIAS --- */}
+        {delivery.status === "cancelled" && (
+          <View style={styles.section}>
+            <View style={[styles.infoCard, styles.cancelledCard]}>
+              <Text style={[styles.sectionTitle, styles.cancelledTitle]}>
+                Detalles de la Incidencia
+              </Text>
+              <View style={styles.infoRow}>
+                <FontAwesome
+                  name="exclamation-circle"
+                  size={20}
+                  color="#D10000"
+                />
+                <Text style={styles.cancelledLabel}>Motivo:</Text>
+                <Text style={styles.cancelledValue}>
+                  {delivery.cancellation_reason?.replace(/_/g, " ") ??
+                    "No especificado"}
+                </Text>
+              </View>
+              {delivery.cancellation_notes && (
+                <View style={styles.infoRow}>
+                  <FontAwesome name="commenting-o" size={20} color="#D10000" />
+                  <Text style={styles.cancelledLabel}>Notas:</Text>
+                  <Text style={[styles.cancelledValue, styles.notesText]}>
+                    "{delivery.cancellation_notes}"
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* TARJETA INFORMACION DEL CLIENTE */}
         <View style={styles.section}>
           <View style={styles.infoCard}>
@@ -516,7 +616,13 @@ export default function DeliveryDetailScreen() {
             <View style={styles.infoRow}>
               <FontAwesome name="phone" size={20} color="#007AFF" />
               <Text style={styles.infoLabel}>Teléfono:</Text>
-              <Text style={styles.infoValue}>
+              <Text
+                style={[
+                  styles.infoValue,
+                  { color: "#007AFF", textDecorationLine: "underline" },
+                ]}
+                onPress={() => handleCallClient(delivery.delivery_id)}
+              >
                 {delivery.client?.phone || "N/A"}
               </Text>
             </View>
@@ -633,6 +739,12 @@ export default function DeliveryDetailScreen() {
         )}
       </View>
 
+      <IncidentModal
+        visible={isIncidentModalVisible}
+        onClose={() => setIncidentModalVisible(false)}
+        onSubmit={handleReportIncident}
+      />
+
       {/* MODAL GENERICO PARA CONFIRMAR ACCIONES */}
       <Modal
         transparent={true}
@@ -702,6 +814,10 @@ const styles = StyleSheet.create({
   },
   headerSpacer: {
     width: 30,
+  },
+  headerButton: {
+    width: 40,
+    alignItems: "center",
   },
   content: {
     flex: 1,
@@ -874,5 +990,32 @@ const styles = StyleSheet.create({
   modalButtonTextCancel: {
     color: "#333",
     fontWeight: "bold",
+  },
+  // Estilos para la sección de incidencias
+  cancelledCard: {
+    backgroundColor: "rgba(255, 59, 48, 0.05)",
+    borderColor: "#FFE5E5",
+  },
+  cancelledTitle: {
+    color: "#D10000",
+  },
+  cancelledLabel: {
+    fontWeight: "500",
+    color: "#555",
+    backgroundColor: "rgba(255, 59, 48, 0.05)",
+    paddingLeft: 15,
+    fontSize: 14,
+    minWidth: 70,
+  },
+  cancelledValue: {
+    color: "#555",
+    backgroundColor: "rgba(255, 59, 48, 0.05)",
+    fontSize: 14,
+    flex: 1,
+    textAlign: "right",
+  },
+  notesText: {
+    fontStyle: "italic",
+    color: "#555",
   },
 });

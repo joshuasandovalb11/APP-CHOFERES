@@ -18,6 +18,7 @@ import {
   Location,
   TrackingPoint,
   TrackingEventType,
+  IncidentReason,
 } from "../types";
 import LocationService from "@/services/location";
 import googleMapsService from "@/services/googleMapsService";
@@ -29,6 +30,7 @@ interface AppState extends AuthState {
     currentDelivery: Delivery | null;
     nextDeliveries: Delivery[];
     completedDeliveries: Delivery[];
+    cancelledDeliveries: Delivery[];
   };
   currentLocation: Location | null;
   deliveryTimer: {
@@ -44,7 +46,11 @@ interface AppState extends AuthState {
 }
 
 interface OfflineEvent {
-  type: "start_delivery" | "complete_delivery" | "log_event";
+  type:
+    | "start_delivery"
+    | "complete_delivery"
+    | "log_event"
+    | "report_incident";
   payload: any;
   timestamp: number;
 }
@@ -68,7 +74,11 @@ type AppAction =
         suggestedJourneyPolyline: string;
       };
     }
-  | { type: "SET_VIEWED_DELIVERY_ID"; payload: number | null };
+  | { type: "SET_VIEWED_DELIVERY_ID"; payload: number | null }
+  | {
+      type: "REPORT_INCIDENT";
+      payload: { deliveryId: number; reason: IncidentReason; notes?: string };
+    };
 
 const initialState: AppState = {
   isLoggedIn: false,
@@ -79,6 +89,7 @@ const initialState: AppState = {
     currentDelivery: null,
     nextDeliveries: [],
     completedDeliveries: [],
+    cancelledDeliveries: [],
   },
   currentLocation: null,
   deliveryTimer: {
@@ -186,6 +197,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
           currentDelivery: null,
           nextDeliveries: updatedNextDeliveries,
           completedDeliveries: updatedCompletedDeliveries,
+          cancelledDeliveries: state.deliveryStatus.cancelledDeliveries,
         },
         deliveryTimer: initialState.deliveryTimer,
       };
@@ -257,6 +269,68 @@ function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         currentlyViewedDeliveryId: action.payload,
       };
+
+    case "REPORT_INCIDENT": {
+      const { deliveryId, reason, notes } = action.payload;
+
+      // Buscamos la entrega en TODAS las listas posibles de origen.
+      const deliveryToCancel =
+        state.deliveryStatus.currentDelivery?.delivery_id === deliveryId
+          ? state.deliveryStatus.currentDelivery
+          : state.currentFEC?.deliveries.find(
+              (d) => d.delivery_id === deliveryId
+            );
+
+      if (!deliveryToCancel) {
+        console.warn(
+          `[Reducer] No se encontró la entrega ${deliveryId} para cancelar.`
+        );
+        return state; // Si no se encuentra, no hacemos nada.
+      }
+
+      // Creamos la versión actualizada de la entrega.
+      const updatedDelivery = {
+        ...deliveryToCancel,
+        status: "cancelled" as const,
+        cancellation_reason: reason,
+        cancellation_notes: notes,
+      };
+
+      return {
+        ...state,
+        // Actualizamos la lista de entregas del FEC original.
+        currentFEC: state.currentFEC
+          ? {
+              ...state.currentFEC,
+              deliveries: state.currentFEC.deliveries.map((d) =>
+                d.delivery_id === deliveryId ? updatedDelivery : d
+              ),
+            }
+          : state.currentFEC,
+        deliveryStatus: {
+          ...state.deliveryStatus,
+          // La quitamos de la lista de visualización de pendientes.
+          nextDeliveries: state.deliveryStatus.nextDeliveries.filter(
+            (d) => d.delivery_id !== deliveryId
+          ),
+          // Y la añadimos a la lista de canceladas.
+          cancelledDeliveries: [
+            ...state.deliveryStatus.cancelledDeliveries,
+            updatedDelivery,
+          ],
+          // Si la entrega cancelada era la que estaba activa, la reseteamos.
+          currentDelivery:
+            state.deliveryStatus.currentDelivery?.delivery_id === deliveryId
+              ? null
+              : state.deliveryStatus.currentDelivery,
+          hasActiveDelivery:
+            state.deliveryStatus.currentDelivery?.delivery_id === deliveryId
+              ? false
+              : state.deliveryStatus.hasActiveDelivery,
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -283,6 +357,11 @@ const AppContext = createContext<{
     currentLocation: Location
   ) => Promise<void>;
   setViewedDeliveryId: (deliveryId: number | null) => void;
+  reportIncident: (
+    deliveryId: number,
+    reason: IncidentReason,
+    notes?: string
+  ) => Promise<void>;
 }>({
   state: initialState,
   isOffline: false,
@@ -297,6 +376,7 @@ const AppContext = createContext<{
   logDeliveryEvent: () => {},
   setOptimizedRoute: async () => {},
   setViewedDeliveryId: () => {},
+  reportIncident: async () => {},
 });
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -439,8 +519,58 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "STOP_TIMER" });
       return;
     }
-    dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
-    dispatch({ type: "STOP_TIMER" });
+    try {
+      console.log(
+        `Online: Reportando finalización de entrega ${deliveryId} al servidor.`
+      );
+      dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
+      dispatch({ type: "STOP_TIMER" });
+    } catch (error) {
+      console.error("Error al completar la entrega:", error);
+      // Opcional: si la API falla, podríamos encolar el evento para reintentar.
+    }
+  };
+
+  const reportIncident = async (
+    deliveryId: number,
+    reason: IncidentReason,
+    notes?: string
+  ) => {
+    // Si estamos offline, usamos la cola que ya creamos
+    if (isOffline) {
+      console.log("Offline: Encolando reporte de incidencia.");
+      const event: OfflineEvent = {
+        type: "report_incident",
+        payload: { deliveryId, reason, notes },
+        timestamp: Date.now(),
+      };
+      await addEventToQueue(event);
+      // Hacemos el cambio en la UI inmediatamente (actualización optimista)
+      dispatch({
+        type: "REPORT_INCIDENT",
+        payload: { deliveryId, reason, notes },
+      });
+      dispatch({ type: "STOP_TIMER" });
+      return;
+    }
+
+    // Si estamos online, intentamos enviar al servidor
+    try {
+      console.log("Online: Enviando reporte de incidencia al servidor.");
+      // --- AQUÍ IRÍA LA LÓGICA PARA LLAMAR A TU API REAL ---
+      // await apiService.reportDeliveryIncident({ deliveryId, reason, notes });
+
+      // Si la llamada a la API es exitosa, actualizamos el estado de la app
+      dispatch({
+        type: "REPORT_INCIDENT",
+        payload: { deliveryId, reason, notes },
+      });
+      dispatch({ type: "STOP_TIMER" });
+    } catch (error) {
+      console.error("Error al reportar incidencia:", error);
+      // Opcional: Si la API falla, podríamos guardar el evento en la cola igualmente.
+      // Esto aumentaría la robustez.
+    }
   };
 
   // Funcion para iniciar el seguimiento del viaje
@@ -539,6 +669,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         logDeliveryEvent,
         setOptimizedRoute,
         setViewedDeliveryId,
+        reportIncident,
       }}
     >
       {children}

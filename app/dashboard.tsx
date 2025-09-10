@@ -133,8 +133,9 @@ export default function DashboardScreen() {
   // Ordenamos las entregas pendientes (incluyendo la que está en progreso)
   const sortedPendingDeliveries = useMemo(() => {
     const pending =
-      state.currentFEC?.deliveries.filter((d) => d.status !== "completed") ||
-      [];
+      state.currentFEC?.deliveries.filter(
+        (d) => d.status !== "completed" && d.status !== "cancelled"
+      ) || [];
 
     const optimizedOrderIds = state.currentFEC?.optimizedOrderId_list;
 
@@ -174,13 +175,15 @@ export default function DashboardScreen() {
         return pendingList;
       case 1: // Completadas
         return state.deliveryStatus.completedDeliveries || [];
+      case 2: // Incidencias
+        return state.deliveryStatus.cancelledDeliveries || [];
       default:
         return [];
     }
   };
 
   const listData = getListData();
-  const tabTitles = ["Pendientes", "Completadas"];
+  const tabTitles = ["Pendientes", "Completadas", "Incidencias"];
 
   // Retorna un color según el estado de la entrega.
   const getStatusColor = (status?: string) => {
@@ -227,9 +230,12 @@ export default function DashboardScreen() {
   }) => {
     const isDisabled =
       selectedTab === 0 ||
-      (selectedTab === 1 && state.deliveryStatus.hasActiveDelivery);
+      (selectedTab === 1 && state.deliveryStatus.hasActiveDelivery) ||
+      (selectedTab === 2 && state.deliveryStatus.hasActiveDelivery);
 
     const innerViewBackgroundColor = isDisabled ? "transparent" : "white";
+
+    const isCancelled = item.status === "cancelled";
 
     return (
       <TouchableOpacity
@@ -247,14 +253,22 @@ export default function DashboardScreen() {
             {item.client?.client_id || "ID desconocido"} -{" "}
             {item.client?.name || "Cliente desconocido"}
           </Text>
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: getStatusColor(item.status) },
-            ]}
-          >
-            <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
-          </View>
+          {isCancelled ? (
+            <View style={[styles.statusBadge, { backgroundColor: "#FF3B30" }]}>
+              <Text style={styles.statusText}>Incidencia</Text>
+            </View>
+          ) : (
+            <View
+              style={[
+                styles.statusBadge,
+                { backgroundColor: getStatusColor(item.status) },
+              ]}
+            >
+              <Text style={styles.statusText}>
+                {getStatusText(item.status)}
+              </Text>
+            </View>
+          )}
         </View>
 
         <View
@@ -288,6 +302,24 @@ export default function DashboardScreen() {
           )}
         </View>
 
+        {isCancelled && (
+          <View
+            style={[
+              styles.reasonContainer,
+              { backgroundColor: innerViewBackgroundColor },
+            ]}
+          >
+            <Text style={styles.reasonLabel}>Motivo del Reporte:</Text>
+            <Text style={styles.reasonText}>
+              {item.cancellation_reason?.replace(/_/g, " ") ??
+                "No especificado"}
+            </Text>
+            {item.cancellation_notes && (
+              <Text style={styles.notesText}>"{item.cancellation_notes}"</Text>
+            )}
+          </View>
+        )}
+
         <View
           style={[
             styles.deliveryFooter,
@@ -319,6 +351,12 @@ export default function DashboardScreen() {
         color: "#6C757D",
         title: "Sin Entregas Completadas",
         text: "Aún no has completado ninguna entrega.",
+      },
+      2: {
+        icon: "warning",
+        color: "#ff0019ff",
+        title: "Sin Incidencias",
+        text: "No se reportó ninguna incidencia.",
       },
     };
     const currentMessage = messages[selectedTab];
@@ -871,5 +909,35 @@ const styles = StyleSheet.create({
   modalButtonTextCancel: {
     color: "#333",
     fontWeight: "bold",
+  },
+
+  cancelledItem: {
+    borderColor: "#FF3B30",
+    borderWidth: 1,
+    backgroundColor: "rgba(255, 59, 48, 0.05)",
+  },
+  reasonContainer: {
+    // paddingVertical: 10,
+    // paddingHorizontal: 5,
+    marginTop: 5,
+    marginBottom: 10,
+  },
+  reasonLabel: {
+    fontSize: 14,
+    color: "#D10000",
+    fontWeight: "bold",
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  reasonText: {
+    fontSize: 12,
+    color: "#A30000",
+    textTransform: "capitalize",
+  },
+  notesText: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
+    marginTop: 5,
   },
 });

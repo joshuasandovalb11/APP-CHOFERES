@@ -7,12 +7,19 @@ export interface Driver {
   phone_number: string;
 }
 
+// Salesperson types
+export interface Salesperson {
+  name: string;
+  phone: string;
+}
+
 // Client types
 export interface Client {
   client_id: number;
   name: string;
   phone: number;
   gps_location: string;
+  salesperson?: Salesperson;
 }
 
 // Delivery types
@@ -29,11 +36,22 @@ export interface Delivery {
   end_latitud?: number;
   end_longitud?: number;
   accepted_next_at?: string;
+  invoice_id?: string;
   client?: Client;
   status?: "pending" | "in_progress" | "completed" | "cancelled";
   distance?: number;
   priority?: number;
+  cancellation_reason?: string;
+  cancellation_notes?: string;
 }
+
+// Incident reasons
+export type IncidentReason =
+  | "CLIENTE_AUSENTE"
+  | "DIRECCION_INCORRECTA"
+  // | "MERCANCIA_RECHAZADA"
+  | "VEHICULO_AVERIADO";
+// | "OTRO";
 
 // EventType para marcar inicios y fines de entregas
 export type TrackingEventType = "journey" | "start_delivery" | "end_delivery";
@@ -68,7 +86,6 @@ export interface FEC {
   date: string;
   deliveries: Delivery[];
   status: "active" | "completed";
-  // --- NUEVOS CAMPOS PARA LA RUTA OPTIMIZADA ---
   optimizedOrderId_list?: number[];
   suggestedJourneyPolyline?: string;
 }

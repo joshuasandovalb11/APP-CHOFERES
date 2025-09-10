@@ -8,6 +8,8 @@ import {
   Switch,
   Linking,
   Dimensions,
+  Platform,
+  Alert,
 } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import * as Notifications from "expo-notifications";
@@ -59,6 +61,15 @@ export default function SettingsMenu({
       });
     }
   }, [visible]);
+
+  // Función para abrir la configuración de internet del dispositivo
+  const openWifiSettings = () => {
+    if (Platform.OS === "android") {
+      Linking.sendIntent("android.settings.WIFI_SETTINGS");
+    } else {
+      Linking.openSettings();
+    }
+  };
 
   // Función para verificar el estado actual de los permisos y actualizar los switches
   const checkCurrentPermissions = async () => {
@@ -138,6 +149,7 @@ export default function SettingsMenu({
               styles.statusText,
               isOffline ? styles.offlineText : styles.onlineText,
             ]}
+            onPress={openWifiSettings}
           >
             {isOffline ? "Offline" : "Online"}
           </Text>
