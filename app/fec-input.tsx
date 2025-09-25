@@ -11,9 +11,10 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Text, View } from "@/components/Themed";
 import { useApp } from "@/context/AppContext";
-import { mockApiService } from "@/services/api";
+import { apiService } from "@/services/api";
 import { Driver } from "@/types";
-import locationService from "@/services/location"; // Importar LocationService
+import locationService from "@/services/location";
+import ActionModal from "@/components/ActionModal";
 
 export default function FECInputScreen() {
   const [fecNumber, setFecNumber] = useState("");
@@ -22,9 +23,18 @@ export default function FECInputScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalMessage, setModalMessage] = useState("");
+
   // Funcion para manejar cambios en el número FEC
   const handleFECNumberChange = (text: string) => {
     setFecNumber(text.replace(/[^0-9\s]/g, ""));
+  };
+
+  // Función para mostrar un error en el modal
+  const showErrorModal = (message: string) => {
+    setModalMessage(message);
+    setModalVisible(true);
   };
 
   // Función para manejar el envío del número FEC
@@ -42,30 +52,100 @@ export default function FECInputScreen() {
         setIsLoading(false);
         return;
       }
-      const driver: Driver = JSON.parse(params.driverData as string);
-      const fecData = await mockApiService.getDeliveriesByFEC(fecNumber);
 
-      try {
-        const currentLocation = await locationService.getCurrentLocation();
+      // Crear objeto Driver temporal con el username del login
+      const driver: Driver = {
+        driver_id: 0,
+        username: params.username as string,
+        num_unity: "",
+        vehicle_plate: "",
+        phone_number: "",
+      };
 
-        if (currentLocation && fecData.deliveries.length > 0) {
-          await setOptimizedRoute(fecData.deliveries, currentLocation);
-        } else {
-          console.log(
-            "No se pudo obtener la ubicación actual o no hay entregas para optimizar."
-          );
+      let fecData = await apiService.getFEC(fecNumber);
+
+      const hasCompleteOptimizedRoute =
+        fecData.suggestedJourneyPolyline &&
+        fecData.suggestedJourneyPolyline.length > 0 &&
+        fecData.optimizedOrderId_list &&
+        fecData.optimizedOrderId_list.length > 0;
+
+      console.log("[FEC Input] Verificando ruta existente:", {
+        fecId: fecData.fec_id,
+        hasSuggestedPolyline: !!fecData.suggestedJourneyPolyline,
+        polylineLength: fecData.suggestedJourneyPolyline?.length || 0,
+        hasOptimizedOrder: !!fecData.optimizedOrderId_list,
+        optimizedOrderLength: fecData.optimizedOrderId_list?.length || 0,
+        hasCompleteRoute: hasCompleteOptimizedRoute,
+      });
+
+      if (!hasCompleteOptimizedRoute) {
+        console.log(
+          "[FEC Input] No se encontró ruta optimizada completa. Calculando..."
+        );
+
+        try {
+          const currentLocation = await locationService.getCurrentLocation();
+
+          if (currentLocation && fecData.deliveries.length > 0) {
+            const pendingDeliveries = fecData.deliveries.filter(
+              (delivery) => delivery.status === "pending"
+            );
+
+            if (pendingDeliveries.length > 0) {
+              console.log(
+                `[FEC Input] Calculando ruta para ${pendingDeliveries.length} entregas pendientes`
+              );
+
+              const updatedFecData = await setOptimizedRoute(
+                fecData,
+                pendingDeliveries,
+                currentLocation
+              );
+
+              if (updatedFecData) {
+                fecData = updatedFecData;
+              }
+            } else {
+              console.log(
+                "[FEC Input] No hay entregas pendientes para optimizar."
+              );
+            }
+          }
+        } catch (optimizationError) {
+          console.error("Optimization Error:", optimizationError);
         }
-      } catch (optimizationError) {
-        console.error("Optimization Error:", optimizationError);
-        // Opcional: podrías mostrar una alerta no bloqueante, pero para el conductor es mejor que no vea nada
-        // Alert.alert("Aviso", "No se pudo optimizar la ruta. Se mostrará en el orden predeterminado.");
+      } else {
+        console.log(
+          "[FEC Input] ✅ Se encontró una ruta optimizada completa. Usando ruta existente:",
+          {
+            optimizedOrderId_list: fecData.optimizedOrderId_list,
+            polylineLength: fecData.suggestedJourneyPolyline?.length,
+          }
+        );
       }
+
+      console.log("[FEC Input] FEC final antes del login:", {
+        optimizedOrderId_list: fecData.optimizedOrderId_list,
+        suggestedJourneyPolyline: !!fecData.suggestedJourneyPolyline,
+        polylineLength: fecData.suggestedJourneyPolyline?.length || 0,
+      });
 
       await login(driver, fecData);
       startJourneyTracking();
       router.replace("/dashboard");
-    } catch (error) {
-      Alert.alert("Error", "Número FEC no válido o no hay entregas asignadas");
+    } catch (error: any) {
+      const errorMessage =
+        error.response?.data?.detail ||
+        error.message ||
+        "Ocurrió un error inesperado.";
+
+      showErrorModal(errorMessage);
+      console.error("Error en FEC input:", error.response?.data || error);
+
+      if (error.response?.status === 401) {
+        router.replace("/login");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -81,6 +161,20 @@ export default function FECInputScreen() {
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
+      <ActionModal
+        visible={modalVisible}
+        title="Error"
+        message={modalMessage}
+        buttons={[
+          {
+            text: "Entendido",
+            onPress: () => setModalVisible(false),
+            style: "confirm",
+          },
+        ]}
+        onClose={() => setModalVisible(false)}
+      />
+
       <View style={styles.content}>
         <View style={styles.header}>
           <Text style={styles.title}>Verificar FEC</Text>

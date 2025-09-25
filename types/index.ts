@@ -17,7 +17,7 @@ export interface Salesperson {
 export interface Client {
   client_id: number;
   name: string;
-  phone: number;
+  phone: string;
   gps_location: string;
   salesperson?: Salesperson;
 }
@@ -31,10 +31,11 @@ export interface Delivery {
   delivery_time?: string;
   actual_duration?: string;
   estimated_duration?: string;
-  start_latitud: number;
-  start_longitud: number;
-  end_latitud?: number;
-  end_longitud?: number;
+  estimated_distance?: string;
+  start_latitude: number;
+  start_longitude: number;
+  end_latitude?: number;
+  end_longitude?: number;
   accepted_next_at?: string;
   invoice_id?: string;
   client?: Client;
@@ -63,6 +64,8 @@ export interface TrackingPoint {
   timestamp: string;
   eventType: TrackingEventType;
   deliveryId?: number;
+  estimatedDuration?: string | null;
+  estimatedDistance?: string | null;
 }
 
 // Location types
@@ -81,7 +84,8 @@ export interface DeliveryStatus {
 
 // FEC (Factura de Entrega Chofer)
 export interface FEC {
-  fec_number: string;
+  fec_id: number;
+  fec_number: number;
   driver_id: number;
   date: string;
   deliveries: Delivery[];

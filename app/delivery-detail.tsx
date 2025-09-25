@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, Dispatch } from "react";
 import {
   StyleSheet,
   ScrollView,
@@ -19,6 +19,7 @@ import IncidentModal from "@/components/IncidentModal";
 import MapView, { Marker } from "react-native-maps";
 import * as Notifications from "expo-notifications";
 import * as ExpoLocation from "expo-location";
+import googleMapsService from "@/services/googleMapsService";
 
 const { width } = Dimensions.get("window");
 
@@ -38,6 +39,7 @@ interface ModalInfo {
 export default function DeliveryDetailScreen() {
   const {
     state,
+    dispatch,
     startDelivery,
     completeDelivery,
     updateLocation,
@@ -45,11 +47,9 @@ export default function DeliveryDetailScreen() {
     setViewedDeliveryId,
     reportIncident,
   } = useApp();
-  const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [isIncidentModalVisible, setIncidentModalVisible] = useState(false);
   const [destinationLocation, setDestinationLocation] =
     useState<Location | null>(null);
-  const [distance, setDistance] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -60,6 +60,44 @@ export default function DeliveryDetailScreen() {
     message: "",
     buttons: [],
   });
+
+  // Estado para la distancia formateada
+  const delivery = useMemo(() => {
+    const deliveryId = parseInt(params.deliveryId as string);
+    if (!deliveryId) return null;
+
+    if (state.deliveryStatus.currentDelivery?.delivery_id === deliveryId) {
+      return state.deliveryStatus.currentDelivery;
+    }
+
+    return (
+      state.deliveryStatus.nextDeliveries.find(
+        (d) => d.delivery_id === deliveryId
+      ) ||
+      state.deliveryStatus.completedDeliveries.find(
+        (d) => d.delivery_id === deliveryId
+      ) ||
+      state.currentFEC?.deliveries.find((d) => d.delivery_id === deliveryId) ||
+      null
+    );
+  }, [params.deliveryId, state]);
+
+  // DEBUG: Mostrar los datos completos de la entrega en consola
+  // useEffect(() => {
+  //   console.log(
+  //     "[DELIVERY-DETAIL] Datos completos de la entrega:",
+  //     JSON.stringify(delivery, null, 2)
+  //   );
+
+  //   if (delivery) {
+  //     console.log("[DELIVERY-DETAIL] Campos de distancia:", {
+  //       estimated_distance: delivery.estimated_distance,
+  //       estimated_duration: delivery.estimated_duration,
+  //       status: delivery.status,
+  //       delivery_id: delivery.delivery_id,
+  //     });
+  //   }
+  // }, [delivery]);
 
   // Este efecto se encarga de registrar y limpiar el ID de la entrega que se está viendo
   useEffect(() => {
@@ -77,6 +115,17 @@ export default function DeliveryDetailScreen() {
     };
   }, [params.deliveryId]);
 
+  // Efecto para actualizar la ubicación del destino cuando cambia la entrega
+  useEffect(() => {
+    if (delivery?.client?.gps_location) {
+      const destination = parseGPSLocation(delivery.client.gps_location);
+      if (destination) {
+        setDestinationLocation(destination);
+      }
+    }
+  }, [delivery]);
+
+  // Funcion para manejar los reportes de incidentes
   const handleReportIncident = async (
     reason: IncidentReason,
     notes?: string
@@ -86,16 +135,12 @@ export default function DeliveryDetailScreen() {
         state.deliveryStatus.currentDelivery?.delivery_id ===
         delivery.delivery_id;
 
-      // Si es la entrega activa, entonces debemos limpiar su notificación persistente.
       if (isActiveDelivery) {
-        // Llamamos a la misma función de limpieza que se usa al completar una entrega.
         await stopNotificationsAndGeofencing();
       }
-      // Llama a la función del contexto para registrar la incidencia
       reportIncident(delivery.delivery_id, reason, notes);
-      // Cierra el modal
       setIncidentModalVisible(false);
-      // Regresa al dashboard, ya que esta entrega ya no está activa
+
       router.back();
     }
   };
@@ -154,66 +199,6 @@ export default function DeliveryDetailScreen() {
     setModalInfo({ ...modalInfo, visible: false });
   };
 
-  // FUNCION PARA ENCONTRAR UNA ENTREGA
-  const findDelivery = (deliveryId: number): boolean => {
-    const pendingDelivery = state.deliveryStatus.nextDeliveries.find(
-      (d) => d.delivery_id === deliveryId
-    );
-    if (pendingDelivery) {
-      setDelivery(pendingDelivery);
-      return true;
-    }
-    if (state.deliveryStatus.currentDelivery?.delivery_id === deliveryId) {
-      setDelivery(state.deliveryStatus.currentDelivery);
-      return true;
-    }
-    const completedDelivery = state.deliveryStatus.completedDeliveries.find(
-      (d) => d.delivery_id === deliveryId
-    );
-    if (completedDelivery) {
-      setDelivery(completedDelivery);
-      return true;
-    }
-    const cancelledDelivery = state.currentFEC?.deliveries.find(
-      (d) => d.delivery_id === deliveryId
-    );
-    if (cancelledDelivery) {
-      setDelivery(cancelledDelivery);
-      return true;
-    }
-    return false;
-  };
-
-  // EFECTO PARA BUSCAR UNA ENTREGA
-  useEffect(() => {
-    const deliveryId = parseInt(params.deliveryId as string);
-    const wasFound = findDelivery(deliveryId);
-
-    if (!wasFound && !delivery) {
-      setModalInfo({
-        visible: true,
-        title: "Error",
-        message: "Entrega no encontrada",
-        buttons: [{ text: "OK", onPress: () => router.back() }],
-      });
-    }
-  }, [params.deliveryId, state]);
-
-  // EFECTO PARA ACTUALIZAR LA DISTANCIA Y LA UBICACION DE DESTINO
-  useEffect(() => {
-    if (delivery?.client?.gps_location && state.currentLocation) {
-      const destination = parseGPSLocation(delivery.client.gps_location);
-      if (destination) {
-        setDestinationLocation(destination);
-        const dist = LocationService.calculateDistance(
-          state.currentLocation,
-          destination
-        );
-        setDistance(formatDistance(dist));
-      }
-    }
-  }, [delivery, state.currentLocation]);
-
   // FUNCION PARA INICIAR LA ENTREGA
   const handleStartDelivery = () => {
     if (!delivery) return;
@@ -233,24 +218,18 @@ export default function DeliveryDetailScreen() {
       title: "Iniciar Entrega",
       message: "¿Deseas iniciar la navegación con Google Maps?",
       buttons: [
-        { text: "Cancelar", onPress: hideModal, style: "cancel" },
+        {
+          text: "Cancelar",
+          onPress: hideModal,
+          style: "cancel",
+        },
         {
           text: "Navegar",
           onPress: async () => {
             hideModal();
             setIsLoading(true);
             try {
-              const currentLocation =
-                await LocationService.getCurrentLocation();
-              if (currentLocation) {
-                updateLocation(currentLocation);
-                logDeliveryEvent(
-                  "start_delivery",
-                  delivery.delivery_id,
-                  currentLocation
-                );
-              }
-              startDelivery(delivery.delivery_id);
+              await startDelivery(delivery.delivery_id);
 
               await showOngoingDeliveryNotification(delivery.delivery_id);
               if (destinationLocation) {
@@ -287,6 +266,7 @@ export default function DeliveryDetailScreen() {
   // FUNCION PARA COMPLETAR LA ENTREGA
   const handleCompleteDelivery = () => {
     if (!delivery) return;
+
     setModalInfo({
       visible: true,
       title: "Completar Entrega",
@@ -526,8 +506,12 @@ export default function DeliveryDetailScreen() {
           delivery.status !== "completed" &&
           delivery.status !== "cancelled" && (
             <TouchableOpacity
+              disabled={delivery.status !== "in_progress"}
               onPress={() => setIncidentModalVisible(true)}
-              style={styles.headerButton}
+              style={[
+                styles.headerButton,
+                delivery.status !== "in_progress" && styles.buttonDisabled,
+              ]}
             >
               <FontAwesome name="warning" size={20} color="#FF3B30" />
             </TouchableOpacity>
@@ -638,12 +622,18 @@ export default function DeliveryDetailScreen() {
               <Text style={styles.infoLabel}>No. Orden:</Text>
               <Text style={styles.infoValue}>{delivery.delivery_id}</Text>
             </View>
-            {distance && (
-              <View style={[styles.infoRow]}>
-                <FontAwesome name="road" size={20} color="#007AFF" />
-                <Text style={styles.infoLabel}>Distancia:</Text>
-                <Text style={styles.infoValue}>{distance}</Text>
-              </View>
+
+            {delivery.estimated_distance && (
+              <>
+                <View style={styles.infoRow}>
+                  <FontAwesome name="map-signs" size={20} color="#007AFF" />
+                  <Text style={styles.infoLabel}>Distancia Estimada:</Text>
+                  <Text style={styles.infoValue}>
+                    {delivery.estimated_distance} ({delivery.estimated_duration}
+                    )
+                  </Text>
+                </View>
+              </>
             )}
 
             <View

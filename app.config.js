@@ -3,16 +3,16 @@ import "dotenv/config";
 
 export default {
   expo: {
-    name: "App-entregas",
+    name: "Sistema Entregas",
     slug: "App-entregas",
     version: "1.0.0",
     orientation: "portrait",
-    icon: "./assets/images/icon.png",
+    icon: "./assets/images/new-icon.png",
     scheme: "appentregas",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     splash: {
-      image: "./assets/images/splash-icon.png",
+      image: "./assets/images/new-icon.png",
       resizeMode: "contain",
       backgroundColor: "#ffffff",
     },
@@ -21,9 +21,10 @@ export default {
     },
     android: {
       adaptiveIcon: {
-        foregroundImage: "./assets/images/adaptive-icon.png",
+        foregroundImage: "./assets/images/new-icon.png",
         backgroundColor: "#ffffff",
       },
+      usesCleartextTraffic: true,
       config: {
         googleMaps: {
           apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
@@ -41,7 +42,7 @@ export default {
     web: {
       bundler: "metro",
       output: "static",
-      favicon: "./assets/images/favicon.png",
+      favicon: "./assets/images/new-icon.png",
     },
     plugins: [
       "expo-router",

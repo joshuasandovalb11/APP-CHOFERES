@@ -10,7 +10,7 @@ import {
 import { useRouter } from "expo-router";
 import { Text, View } from "@/components/Themed";
 import { useApp } from "@/context/AppContext";
-import { mockApiService } from "@/services/api";
+import { apiService } from "@/services/api";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 
 export default function LoginScreen() {
@@ -29,13 +29,30 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const driver = await mockApiService.validateDriver(username, password);
+      // Solo validamos credenciales y obtenemos el token
+      await apiService.login(username, password);
+
+      // Si el login es exitoso, pasamos a la pantalla de FEC
+      // El username se usará para crear el objeto Driver temporal
       router.push({
         pathname: "/fec-input",
-        params: { driverData: JSON.stringify(driver) },
+        params: { username: username },
       });
-    } catch (error) {
-      alert("Error: Credenciales inválidas");
+    } catch (error: any) {
+      // Manejo mejorado de errores
+      let errorMessage = "Credenciales inválidas";
+
+      if (error.message) {
+        // Si la API devuelve un mensaje específico, lo usamos
+        errorMessage = error.message;
+      } else if (error.toString().includes("Network")) {
+        errorMessage = "Error de conexión. Verifica tu internet";
+      } else if (error.toString().includes("timeout")) {
+        errorMessage = "Tiempo de espera agotado. Intenta nuevamente";
+      }
+
+      alert(`Error: ${errorMessage}`);
+      console.error("Error en login:", error);
     } finally {
       setIsLoading(false);
     }
@@ -98,12 +115,6 @@ export default function LoginScreen() {
               <Text style={styles.buttonText}>Iniciar Sesión</Text>
             )}
           </TouchableOpacity>
-        </View>
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Para prueba: usuario "chofer1", contraseña "1234"
-          </Text>
         </View>
       </View>
     </KeyboardAvoidingView>

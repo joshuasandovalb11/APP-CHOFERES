@@ -23,6 +23,7 @@ import {
 import LocationService from "@/services/location";
 import googleMapsService from "@/services/googleMapsService";
 import * as Notifications from "expo-notifications";
+import { apiService } from "@/services/api";
 
 interface AppState extends AuthState {
   deliveryStatus: {
@@ -56,7 +57,10 @@ interface OfflineEvent {
 }
 
 type AppAction =
-  | { type: "LOGIN"; payload: { driver: Driver; fec: FEC } }
+  | {
+      type: "LOGIN";
+      payload: { driver: Driver; fec: FEC };
+    }
   | { type: "LOGOUT" }
   | { type: "SET_LOCATION"; payload: Location }
   | { type: "START_DELIVERY"; payload: number }
@@ -67,6 +71,7 @@ type AppAction =
   | { type: "START_JOURNEY_TRACKING" }
   | { type: "STOP_JOURNEY_TRACKING" }
   | { type: "ADD_TRACKING_POINT"; payload: TrackingPoint }
+  | { type: "CLEAR_TRACKING_POINTS" }
   | {
       type: "SET_OPTIMIZED_ROUTE";
       payload: {
@@ -78,6 +83,10 @@ type AppAction =
   | {
       type: "REPORT_INCIDENT";
       payload: { deliveryId: number; reason: IncidentReason; notes?: string };
+    }
+  | {
+      type: "SET_ROUTE_DETAILS";
+      payload: { deliveryId: number; distance: string; duration: string };
     };
 
 const initialState: AppState = {
@@ -107,9 +116,21 @@ const initialState: AppState = {
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "LOGIN":
-      const pendingDeliveries = action.payload.fec.deliveries.filter(
-        (d) => d.status === "pending" || d.status === "in_progress"
+      const allDeliveries = action.payload.fec.deliveries;
+
+      const activeDelivery =
+        allDeliveries.find((d) => d.status === "in_progress") || null;
+
+      const pendingDeliveries = allDeliveries.filter(
+        (d) => d.status === "pending"
       );
+      const completedDeliveries = allDeliveries.filter(
+        (d) => d.status === "completed"
+      );
+      const cancelledDeliveries = allDeliveries.filter(
+        (d) => d.status === "cancelled"
+      );
+
       return {
         ...state,
         isLoggedIn: true,
@@ -117,7 +138,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
         currentFEC: action.payload.fec,
         deliveryStatus: {
           ...initialState.deliveryStatus,
+          hasActiveDelivery: !!activeDelivery,
+          currentDelivery: activeDelivery,
           nextDeliveries: pendingDeliveries,
+          completedDeliveries: completedDeliveries,
+          cancelledDeliveries: cancelledDeliveries,
         },
         locationTracking: {
           isTracking: false,
@@ -165,25 +190,32 @@ function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "COMPLETE_DELIVERY": {
-      if (!state.currentFEC || !state.deliveryStatus.currentDelivery)
+      if (!state.currentFEC) return state;
+
+      const deliveryToComplete = state.currentFEC.deliveries.find(
+        (d) => d.delivery_id === action.payload
+      );
+
+      if (!deliveryToComplete) {
+        console.warn(
+          `[Reducer] No se encontró la entrega #${action.payload} para completar.`
+        );
         return state;
+      }
 
       const completedDelivery: Delivery = {
-        ...state.deliveryStatus.currentDelivery,
+        ...deliveryToComplete,
         status: "completed" as const,
       };
 
       const updatedFecDeliveries = state.currentFEC.deliveries.map((d) =>
         d.delivery_id === action.payload ? completedDelivery : d
       );
-
-      const updatedCompletedDeliveries = [
-        ...state.deliveryStatus.completedDeliveries,
-        completedDelivery,
-      ];
-
       const updatedNextDeliveries = updatedFecDeliveries.filter(
         (d) => d.status === "pending"
+      );
+      const updatedCompletedDeliveries = updatedFecDeliveries.filter(
+        (d) => d.status === "completed"
       );
 
       return {
@@ -193,11 +225,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
           deliveries: updatedFecDeliveries,
         },
         deliveryStatus: {
+          ...state.deliveryStatus,
           hasActiveDelivery: false,
           currentDelivery: null,
           nextDeliveries: updatedNextDeliveries,
           completedDeliveries: updatedCompletedDeliveries,
-          cancelledDeliveries: state.deliveryStatus.cancelledDeliveries,
         },
         deliveryTimer: initialState.deliveryTimer,
       };
@@ -254,6 +286,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
           ],
         },
       };
+
+    case "CLEAR_TRACKING_POINTS":
+      return {
+        ...state,
+        locationTracking: { ...state.locationTracking, trackingPoints: [] },
+      };
+
     case "SET_OPTIMIZED_ROUTE":
       if (!state.currentFEC) return state;
       return {
@@ -264,6 +303,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
           suggestedJourneyPolyline: action.payload.suggestedJourneyPolyline,
         },
       };
+
     case "SET_VIEWED_DELIVERY_ID":
       return {
         ...state,
@@ -331,6 +371,40 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "SET_ROUTE_DETAILS": {
+      if (
+        !state.deliveryStatus.currentDelivery ||
+        state.deliveryStatus.currentDelivery.delivery_id !==
+          action.payload.deliveryId
+      ) {
+        return state;
+      }
+
+      const updatedDeliveryWithDetails = {
+        ...state.deliveryStatus.currentDelivery,
+        estimated_distance: action.payload.distance,
+        estimated_duration: action.payload.duration,
+      };
+
+      return {
+        ...state,
+        currentFEC: state.currentFEC
+          ? {
+              ...state.currentFEC,
+              deliveries: state.currentFEC.deliveries.map((d) =>
+                d.delivery_id === action.payload.deliveryId
+                  ? updatedDeliveryWithDetails
+                  : d
+              ),
+            }
+          : state.currentFEC,
+        deliveryStatus: {
+          ...state.deliveryStatus,
+          currentDelivery: updatedDeliveryWithDetails,
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -340,6 +414,7 @@ const AppContext = createContext<{
   state: AppState;
   isOffline: boolean;
   dispatch: Dispatch<AppAction>;
+  flushTrackingPoints: () => Promise<void>;
   login: (driver: Driver, fec: FEC) => Promise<void>;
   logout: () => void;
   startDelivery: (deliveryId: number) => void;
@@ -350,12 +425,14 @@ const AppContext = createContext<{
   logDeliveryEvent: (
     eventType: TrackingEventType,
     deliveryId: number,
-    location: Location
+    location: Location,
+    details?: { estimatedDuration?: string; estimatedDistance?: string }
   ) => void;
   setOptimizedRoute: (
+    fec: FEC,
     deliveries: Delivery[],
     currentLocation: Location
-  ) => Promise<void>;
+  ) => Promise<FEC | null>;
   setViewedDeliveryId: (deliveryId: number | null) => void;
   reportIncident: (
     deliveryId: number,
@@ -366,6 +443,7 @@ const AppContext = createContext<{
   state: initialState,
   isOffline: false,
   dispatch: () => null,
+  flushTrackingPoints: async () => {},
   login: async () => {},
   logout: () => {},
   startDelivery: () => {},
@@ -374,7 +452,7 @@ const AppContext = createContext<{
   startJourneyTracking: () => {},
   stopJourneyTracking: () => {},
   logDeliveryEvent: () => {},
-  setOptimizedRoute: async () => {},
+  setOptimizedRoute: async () => null,
   setViewedDeliveryId: () => {},
   reportIncident: async () => {},
 });
@@ -386,8 +464,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const lastNotificationTimestampRef = useRef(0);
 
   useEffect(() => {
-    isOfflineRef.current = isOffline; // Mantenemos la ref actualizada
+    isOfflineRef.current = isOffline;
   }, [isOffline]);
+
+  useEffect(() => {
+    // Si el seguimiento está activo, creamos un intervalo
+    if (state.locationTracking.isTracking) {
+      const syncInterval = setInterval(async () => {
+        // Hacemos una copia de los puntos para evitar condiciones de carrera
+        const pointsToSync = [...state.locationTracking.trackingPoints];
+        if (pointsToSync.length > 0) {
+          console.log(
+            `Sincronizando ${pointsToSync.length} puntos de tracking...`
+          );
+          try {
+            if (!isOfflineRef.current) {
+              // Solo si estamos online
+              await apiService.logTrackingEvents(pointsToSync);
+              // Si la sincronización es exitosa, limpiamos los puntos del estado
+              dispatch({ type: "CLEAR_TRACKING_POINTS" });
+            }
+          } catch (error) {
+            console.error("Fallo la sincronización de tracking points:", error);
+            // No limpiamos la cola, se reintentará en el siguiente intervalo
+          }
+        }
+      }, 15000); // Sincroniza cada 15 segundos
+
+      // Limpiamos el intervalo cuando el componente se desmonte o el tracking se detenga
+      return () => clearInterval(syncInterval);
+    }
+  }, [
+    state.locationTracking.isTracking,
+    state.locationTracking.trackingPoints,
+  ]);
 
   // EFECTO PARA ESCUCHAR EL ESTADO DE LA RED
   useEffect(() => {
@@ -446,31 +556,70 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     console.log(`Sincronizando ${queue.length} eventos pendientes...`);
 
-    // Aquí iría la lógica para enviar cada evento al servidor.
-    // Es importante que el backend pueda recibir estos eventos,
-    // posiblemente en un endpoint que acepte un array de eventos.
-    try {
-      // Ejemplo: await apiService.syncEvents(queue);
+    // Agrupamos los eventos de tracking para enviarlos en un solo lote
+    const trackingEvents: TrackingPoint[] = [];
+    const otherEvents: OfflineEvent[] = [];
 
-      // Si la sincronización es exitosa, limpia la cola
+    queue.forEach((event) => {
+      if (
+        event.type === "start_delivery" ||
+        event.type === "complete_delivery" ||
+        event.type === "log_event"
+      ) {
+        trackingEvents.push(event.payload as TrackingPoint);
+      } else {
+        otherEvents.push(event);
+      }
+    });
+
+    try {
+      // Enviamos el lote de eventos de tracking si hay alguno
+      if (trackingEvents.length > 0) {
+        await apiService.logTrackingEvents(trackingEvents);
+        console.log(
+          `${trackingEvents.length} eventos de tracking sincronizados.`
+        );
+      }
+
+      // Enviamos los otros eventos uno por uno (ej. incidencias)
+      for (const event of otherEvents) {
+        if (event.type === "report_incident") {
+          const { deliveryId, reason, notes } = event.payload;
+          await apiService.reportIncident(deliveryId, reason, notes);
+          console.log(`Incidencia para entrega ${deliveryId} sincronizada.`);
+        }
+      }
+
+      // Si todas las sincronizaciones son exitosas, limpiamos la cola
       await AsyncStorage.removeItem("offlineQueue");
       console.log("Sincronización completada. Cola limpiada.");
     } catch (error) {
       console.error("Fallo la sincronización de eventos:", error);
-      // Opcional: Implementar lógica de reintentos
+      // No limpiamos la cola para poder reintentar más tarde.
     }
   };
 
   // Función para manejar el inicio de sesión
   const login = async (driver: Driver, fec: FEC) => {
-    dispatch({ type: "LOGIN", payload: { driver, fec } });
-    await AsyncStorage.setItem("driverData", JSON.stringify(driver));
-    await AsyncStorage.setItem("fecData", JSON.stringify(fec));
+    try {
+      dispatch({
+        type: "LOGIN",
+        payload: { driver, fec },
+      });
+
+      // Guardamos en AsyncStorage para persistir la sesión
+      await AsyncStorage.setItem("isAuthenticated", "true");
+      await AsyncStorage.setItem("fecData", JSON.stringify(fec));
+      await AsyncStorage.setItem("driverData", JSON.stringify(driver));
+    } catch (error) {
+      console.error("Error en el proceso de login:", error);
+      throw error;
+    }
   };
 
   const logout = async () => {
-    await AsyncStorage.removeItem("driver");
-    await AsyncStorage.removeItem("currentFEC");
+    await apiService.logout(); // Borra el token
+    await AsyncStorage.multiRemove(["isAuthenticated", "fecData"]);
     dispatch({ type: "LOGOUT" });
   };
 
@@ -488,47 +637,134 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Funcion para iniciar una entrega
   const startDelivery = async (deliveryId: number) => {
-    if (isOffline) {
-      // Si está offline, guarda el evento en la cola
-      const event: OfflineEvent = {
-        type: "start_delivery",
-        payload: { deliveryId },
-        timestamp: Date.now(),
-      };
-      await addEventToQueue(event);
-      // Actualiza el estado local para que el usuario vea el cambio (actualización optimista)
-      dispatch({ type: "START_DELIVERY", payload: deliveryId });
-      dispatch({ type: "START_TIMER", payload: new Date().toISOString() });
+    const location = state.currentLocation;
+    if (!location) {
+      console.error("No se puede iniciar entrega sin ubicación actual.");
+      throw new Error("Ubicación actual no encontrada.");
+    }
+
+    const deliveryData = state.deliveryStatus.nextDeliveries.find(
+      (d) => d.delivery_id === deliveryId
+    );
+
+    if (!deliveryData) {
+      console.error(
+        `No se encontró la entrega con ID ${deliveryId} para iniciar.`
+      );
       return;
     }
-    // Si está online, ejecuta la lógica original (llamar a tu API, etc.)
+
+    // Actualización optimista en la UI
     dispatch({ type: "START_DELIVERY", payload: deliveryId });
     dispatch({ type: "START_TIMER", payload: new Date().toISOString() });
+
+    let estimatedDuration: string | undefined = undefined;
+    let estimatedDistance: string | undefined = undefined;
+
+    if (deliveryData?.client?.gps_location) {
+      try {
+        const clientLocationParts = deliveryData.client.gps_location.split(",");
+        const clientDestination = {
+          latitude: parseFloat(clientLocationParts[0]),
+          longitude: parseFloat(clientLocationParts[1]),
+        };
+
+        const routeDetails = await googleMapsService.getRouteDetails(
+          location,
+          clientDestination
+        );
+
+        if (routeDetails) {
+          estimatedDuration = routeDetails.duration.text;
+          estimatedDistance = routeDetails.distance.text;
+
+          dispatch({
+            type: "SET_ROUTE_DETAILS",
+            payload: {
+              deliveryId,
+              distance: estimatedDistance,
+              duration: estimatedDuration,
+            },
+          });
+
+          console.log(
+            `[AppContext] Duración estimada para la entrega ${deliveryId}: ${estimatedDuration}, Distancia: ${estimatedDistance}`
+          );
+        }
+      } catch (e) {
+        console.error("Error al calcular la duración estimada:", e);
+      }
+    }
+
+    logDeliveryEvent("start_delivery", deliveryId, location, {
+      estimatedDuration,
+      estimatedDistance,
+    });
+
+    const eventPayload: TrackingPoint = {
+      ...location,
+      timestamp: new Date().toISOString(),
+      eventType: "start_delivery",
+      deliveryId: deliveryId,
+      estimatedDuration: estimatedDuration,
+      estimatedDistance: estimatedDistance,
+    };
+
+    if (isOffline) {
+      await addEventToQueue({
+        type: "log_event",
+        payload: eventPayload,
+        timestamp: Date.now(),
+      });
+    } else {
+      try {
+        await apiService.logTrackingEvents([eventPayload]);
+      } catch (error) {
+        console.error("Error al reportar inicio de entrega, encolando:", error);
+        await addEventToQueue({
+          type: "log_event",
+          payload: eventPayload,
+          timestamp: Date.now(),
+        });
+      }
+    }
   };
 
   // Funcion para completar una entrega
   const completeDelivery = async (deliveryId: number) => {
-    if (isOffline) {
-      const event: OfflineEvent = {
-        type: "complete_delivery",
-        payload: { deliveryId },
-        timestamp: Date.now(),
-      };
-      await addEventToQueue(event);
-      dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
-      dispatch({ type: "STOP_TIMER" });
+    const location = state.currentLocation;
+    if (!location) {
+      console.error("No se puede completar entrega sin ubicación actual.");
       return;
     }
-    try {
-      console.log(
-        `Online: Reportando finalización de entrega ${deliveryId} al servidor.`
-      );
-      dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
-      dispatch({ type: "STOP_TIMER" });
-    } catch (error) {
-      console.error("Error al completar la entrega:", error);
-      // Opcional: si la API falla, podríamos encolar el evento para reintentar.
+
+    const eventPayload: TrackingPoint = {
+      ...location,
+      timestamp: new Date().toISOString(),
+      eventType: "end_delivery",
+      deliveryId: deliveryId,
+    };
+
+    if (isOffline) {
+      await addEventToQueue({
+        type: "log_event",
+        payload: eventPayload,
+        timestamp: Date.now(),
+      });
+    } else {
+      try {
+        await apiService.logTrackingEvents([eventPayload]);
+      } catch (error) {
+        console.error("Error al reportar fin de entrega, encolando:", error);
+        await addEventToQueue({
+          type: "log_event",
+          payload: eventPayload,
+          timestamp: Date.now(),
+        });
+      }
     }
+    dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
+    dispatch({ type: "STOP_TIMER" });
   };
 
   const reportIncident = async (
@@ -536,51 +772,68 @@ export function AppProvider({ children }: { children: ReactNode }) {
     reason: IncidentReason,
     notes?: string
   ) => {
-    // Si estamos offline, usamos la cola que ya creamos
-    if (isOffline) {
-      console.log("Offline: Encolando reporte de incidencia.");
-      const event: OfflineEvent = {
-        type: "report_incident",
-        payload: { deliveryId, reason, notes },
-        timestamp: Date.now(),
-      };
-      await addEventToQueue(event);
-      // Hacemos el cambio en la UI inmediatamente (actualización optimista)
-      dispatch({
-        type: "REPORT_INCIDENT",
-        payload: { deliveryId, reason, notes },
-      });
-      dispatch({ type: "STOP_TIMER" });
-      return;
+    const location = state.currentLocation;
+    if (!location) {
+      console.warn(
+        "No se encontró ubicación actual. La incidencia se reportará sin coordenadas."
+      );
     }
 
-    // Si estamos online, intentamos enviar al servidor
-    try {
-      console.log("Online: Enviando reporte de incidencia al servidor.");
-      // --- AQUÍ IRÍA LA LÓGICA PARA LLAMAR A TU API REAL ---
-      // await apiService.reportDeliveryIncident({ deliveryId, reason, notes });
+    const eventPayload = { deliveryId, reason, notes, location };
 
-      // Si la llamada a la API es exitosa, actualizamos el estado de la app
-      dispatch({
-        type: "REPORT_INCIDENT",
-        payload: { deliveryId, reason, notes },
+    if (isOffline) {
+      console.log("Offline: Encolando reporte de incidencia.");
+      await addEventToQueue({
+        type: "report_incident",
+        payload: eventPayload,
+        timestamp: Date.now(),
       });
+    } else {
+      try {
+        console.log("Online: Enviando reporte de incidencia al servidor.");
+        await apiService.reportIncident(
+          deliveryId,
+          reason,
+          notes,
+          location || undefined
+        );
+      } catch (error) {
+        console.error("Error al reportar incidencia, encolando:", error);
+        await addEventToQueue({
+          type: "report_incident",
+          payload: eventPayload,
+          timestamp: Date.now(),
+        });
+      }
+    }
+    dispatch({
+      type: "REPORT_INCIDENT",
+      payload: { deliveryId, reason, notes },
+    });
+    if (state.deliveryStatus.currentDelivery?.delivery_id === deliveryId) {
       dispatch({ type: "STOP_TIMER" });
-    } catch (error) {
-      console.error("Error al reportar incidencia:", error);
-      // Opcional: Si la API falla, podríamos guardar el evento en la cola igualmente.
-      // Esto aumentaría la robustez.
     }
   };
 
   // Funcion para iniciar el seguimiento del viaje
   const startJourneyTracking = () => {
+    if (state.locationTracking.isTracking) {
+      console.log("[AppContext] El seguimiento de la jornada ya está activo.");
+      return;
+    }
+
     dispatch({ type: "START_JOURNEY_TRACKING" });
     LocationService.startLocationTracking((location) => {
+      console.log(
+        `📍 Nuevo punto de tracking capturado: ${new Date().toLocaleTimeString()}`,
+        location
+      );
       const trackingPoint: TrackingPoint = {
-        ...location,
+        latitude: location.latitude,
+        longitude: location.longitude,
         timestamp: new Date().toISOString(),
         eventType: "journey",
+        deliveryId: state.deliveryStatus.currentDelivery?.delivery_id,
       };
       dispatch({ type: "ADD_TRACKING_POINT", payload: trackingPoint });
     });
@@ -596,7 +849,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const logDeliveryEvent = async (
     eventType: TrackingEventType,
     deliveryId: number,
-    location: Location
+    location: Location,
+    details?: { estimatedDuration?: string; estimatedDistance?: string }
   ) => {
     if (isOffline) {
       const event: OfflineEvent = {
@@ -612,25 +866,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
       timestamp: new Date().toISOString(),
       eventType,
       deliveryId,
+      ...details,
     };
     dispatch({ type: "ADD_TRACKING_POINT", payload: eventPoint });
   };
 
   // Funcion para establecer la ruta optimizada
   const setOptimizedRoute = async (
+    fec: FEC,
     deliveries: Delivery[],
     currentLocation: Location
-  ) => {
+  ): Promise<FEC | null> => {
+    console.log(
+      `[setOptimizedRoute] Iniciando cálculo para FEC ID: ${fec.fec_id}`
+    );
+
+    const hasExistingRoute =
+      fec.suggestedJourneyPolyline &&
+      fec.suggestedJourneyPolyline.length > 0 &&
+      fec.optimizedOrderId_list &&
+      fec.optimizedOrderId_list.length > 0;
+
+    if (hasExistingRoute) {
+      console.log(
+        `[setOptimizedRoute] FEC ${fec.fec_id} ya tiene ruta optimizada completa. Saltando cálculo.`,
+        {
+          optimizedOrderId_list: fec.optimizedOrderId_list,
+          polylineLength: fec.suggestedJourneyPolyline?.length || 0,
+        }
+      );
+      return fec;
+    }
+
     try {
       const result = await googleMapsService.getOptimizedRoute(
         currentLocation,
         deliveries
       );
 
-      if (result) {
-        const optimizedOrderId_list = result.optimizedOrder.map(
-          (index) => deliveries[index].delivery_id
-        );
+      if (result && fec) {
+        const optimizedOrderId_list = result.optimizedDeliveryIds;
+
+        console.log("[setOptimizedRoute] Resultado de Google Maps:", {
+          optimizedDeliveryIds: optimizedOrderId_list,
+          suggestedRoutePolyline:
+            result.suggestedRoutePolyline?.substring(0, 50) + "...",
+        });
 
         dispatch({
           type: "SET_OPTIMIZED_ROUTE",
@@ -639,12 +920,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
             suggestedJourneyPolyline: result.suggestedRoutePolyline,
           },
         });
+
+        try {
+          const updatedFec = await apiService.updateFecRoute(
+            fec.fec_id,
+            optimizedOrderId_list,
+            result.suggestedRoutePolyline
+          );
+          console.log(
+            `[setOptimizedRoute] ¡Ruta enviada al backend exitosamente!`
+          );
+          return updatedFec;
+        } catch (backendError) {
+          console.error(
+            "[setOptimizedRoute] Error enviando al backend:",
+            backendError
+          );
+          return null;
+        }
       }
+      return null;
     } catch (error) {
-      console.error(
-        "Failed to set optimized route. Using default order.",
-        error
-      );
+      console.error("Failed to set and save optimized route.", error);
+      return null;
     }
   };
 
@@ -652,6 +950,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setViewedDeliveryId = (deliveryId: number | null) => {
     dispatch({ type: "SET_VIEWED_DELIVERY_ID", payload: deliveryId });
   };
+
+  const flushTrackingPoints = async () => {
+    const pointsToSync = [...state.locationTracking.trackingPoints];
+
+    if (pointsToSync.length === 0 || isOfflineRef.current) {
+      return;
+    }
+
+    try {
+      console.log(
+        `[AppContext] Intentando sincronizar lote de ${pointsToSync.length} puntos.`
+      );
+      await apiService.logTrackingPoints(pointsToSync);
+      dispatch({ type: "CLEAR_TRACKING_POINTS" });
+      console.log(`[AppContext] Lote sincronizado exitosamente.`);
+    } catch (error) {
+      console.error(
+        "[AppContext] Error al sincronizar lote de tracking. Se reintentará en el siguiente ciclo.",
+        error
+      );
+    }
+  };
+
+  useEffect(() => {
+    let batchInterval: ReturnType<typeof setInterval>;
+
+    if (state.locationTracking.isTracking) {
+      batchInterval = setInterval(() => {
+        flushTrackingPoints();
+      }, 60000);
+
+      console.log(
+        "[AppContext] Temporizador de batching de tracking INICIADO."
+      );
+    }
+
+    return () => {
+      if (batchInterval) {
+        clearInterval(batchInterval);
+        console.log(
+          "[AppContext] Temporizador de batching de tracking DETENIDO."
+        );
+        flushTrackingPoints();
+      }
+    };
+  }, [state.locationTracking.isTracking]);
 
   return (
     <AppContext.Provider
@@ -670,6 +1014,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setOptimizedRoute,
         setViewedDeliveryId,
         reportIncident,
+        flushTrackingPoints,
       }}
     >
       {children}
@@ -677,4 +1022,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export const useApp = () => useContext(AppContext);
+export const useApp = () => {
+  const context = useContext(AppContext);
+  if (!context) {
+    throw new Error("useApp must be used within an AppProvider");
+  }
+  return context;
+};

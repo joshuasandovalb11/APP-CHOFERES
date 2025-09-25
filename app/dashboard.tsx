@@ -127,7 +127,6 @@ export default function DashboardScreen() {
     });
   };
 
-  // Lógica para determinar la entrega a mostrar y la lista de pendientes
   const { currentDelivery, completedDeliveries } = state.deliveryStatus;
 
   // Ordenamos las entregas pendientes (incluyendo la que está en progreso)
@@ -139,22 +138,68 @@ export default function DashboardScreen() {
 
     const optimizedOrderIds = state.currentFEC?.optimizedOrderId_list;
 
+    console.log("[Dashboard] Debugging estado actual:", {
+      fecId: state.currentFEC?.fec_id,
+      optimizedOrderIds: optimizedOrderIds,
+      optimizedOrderIdsLength: optimizedOrderIds?.length,
+      pendingDeliveriesCount: pending.length,
+      pendingDeliveryIds: pending.map((d) => d.delivery_id),
+      suggestedJourneyPolyline: !!state.currentFEC?.suggestedJourneyPolyline,
+    });
+
     if (optimizedOrderIds && optimizedOrderIds.length > 0) {
-      const deliveryMap = new Map(pending.map((d) => [d.delivery_id, d]));
-      return optimizedOrderIds
-        .map((id) => deliveryMap.get(id))
-        .filter((d): d is Delivery => d !== undefined);
+      console.log(
+        "[Dashboard] ✅ Ordenando por ruta optimizada de Google:",
+        optimizedOrderIds
+      );
+
+      const orderMap = new Map(
+        optimizedOrderIds.map((id, index) => [id, index])
+      );
+
+      const sorted = [...pending].sort(
+        (a, b) =>
+          (orderMap.get(a.delivery_id) ?? 999) -
+          (orderMap.get(b.delivery_id) ?? 999)
+      );
+
+      console.log(
+        "[Dashboard] Orden final después de optimización:",
+        sorted.map((d) => ({ id: d.delivery_id, client: d.client?.name }))
+      );
+
+      return sorted;
     }
 
     if (state.currentLocation && pending.length > 0) {
-      return LocationService.sortDeliveriesByProximity(
+      console.warn(
+        "[Dashboard] ⚠️ ADVERTENCIA: No se encontró ruta optimizada. Ordenando por proximidad."
+      );
+
+      const sortedByProximity = LocationService.sortDeliveriesByProximity(
         pending,
         state.currentLocation
       );
+
+      console.log(
+        "[Dashboard] Orden por proximidad:",
+        sortedByProximity.map((d) => ({
+          id: d.delivery_id,
+          client: d.client?.name,
+          distance: d.distance,
+        }))
+      );
+
+      return sortedByProximity;
     }
 
+    console.log("[Dashboard] Retornando entregas sin ordenar");
     return pending;
-  }, [state.currentFEC, state.currentLocation]);
+  }, [
+    state.currentFEC?.optimizedOrderId_list,
+    state.currentFEC?.deliveries,
+    state.currentLocation,
+  ]);
 
   const deliveryToShow = currentDelivery || sortedPendingDeliveries[0] || null;
 
@@ -271,7 +316,7 @@ export default function DashboardScreen() {
           )}
         </View>
 
-        <View
+        {/* <View
           style={[
             styles.deliveryInfo,
             { backgroundColor: innerViewBackgroundColor },
@@ -300,7 +345,7 @@ export default function DashboardScreen() {
               </Text>
             </View>
           )}
-        </View>
+        </View> */}
 
         {isCancelled && (
           <View
@@ -483,7 +528,7 @@ export default function DashboardScreen() {
                     <Text style={styles.statusText}>Toca para iniciar</Text>
                   </View>
                 </View>
-                <View style={styles.deliveryInfo}>
+                {/* <View style={styles.deliveryInfo}>
                   <View style={styles.infoRow}>
                     <FontAwesome name="phone" size={20} color="#007AFF" />
                     <Text style={styles.infoText}>
@@ -500,7 +545,7 @@ export default function DashboardScreen() {
                       Distancia: {formatDistance(deliveryToShow.distance)}
                     </Text>
                   </View>
-                </View>
+                </View> */}
                 <View style={styles.deliveryFooter}>
                   <Text style={[styles.deliveryId, { color: "#007AFF" }]}>
                     # Orden: {deliveryToShow.delivery_id}
