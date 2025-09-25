@@ -24,6 +24,7 @@ import LocationService from "@/services/location";
 import googleMapsService from "@/services/googleMapsService";
 import * as Notifications from "expo-notifications";
 import { apiService } from "@/services/api";
+import { AppState as ReactNativeAppState } from "react-native";
 
 interface AppState extends AuthState {
   deliveryStatus: {
@@ -87,7 +88,8 @@ type AppAction =
   | {
       type: "SET_ROUTE_DETAILS";
       payload: { deliveryId: number; distance: string; duration: string };
-    };
+    }
+  | { type: "SYNC_TIMER" };
 
 const initialState: AppState = {
   isLoggedIn: false,
@@ -131,6 +133,35 @@ function appReducer(state: AppState, action: AppAction): AppState {
         (d) => d.status === "cancelled"
       );
 
+      let restoredTimerState = initialState.deliveryTimer;
+
+      if (activeDelivery && activeDelivery.start_time) {
+        let startTimeString = activeDelivery.start_time;
+
+        if (!startTimeString.endsWith("Z")) {
+          startTimeString += "Z";
+          console.log(
+            `[AppContext] Corregida zona horaria para start_time: ${startTimeString}`
+          );
+        }
+
+        const startTimeFromDB = new Date(startTimeString).getTime();
+        const currentTime = new Date().getTime();
+        const elapsedSeconds = Math.floor(
+          (currentTime - startTimeFromDB) / 1000
+        );
+
+        restoredTimerState = {
+          isActive: true,
+          startTime: activeDelivery.start_time,
+          elapsedTime: elapsedSeconds > 0 ? elapsedSeconds : 0,
+        };
+
+        console.log(
+          `[AppContext] Contador restaurado. Tiempo transcurrido: ${elapsedSeconds}s`
+        );
+      }
+
       return {
         ...state,
         isLoggedIn: true,
@@ -144,6 +175,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
           completedDeliveries: completedDeliveries,
           cancelledDeliveries: cancelledDeliveries,
         },
+        deliveryTimer: restoredTimerState,
         locationTracking: {
           isTracking: false,
           trackingPoints: [],
@@ -405,6 +437,33 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "SYNC_TIMER": {
+      if (!state.deliveryTimer.isActive || !state.deliveryTimer.startTime) {
+        return state;
+      }
+
+      let startTimeString = state.deliveryTimer.startTime;
+      if (!startTimeString.endsWith("Z")) {
+        startTimeString += "Z";
+      }
+
+      const startTimeFromDB = new Date(startTimeString).getTime();
+      const currentTime = new Date().getTime();
+      const elapsedSeconds = Math.floor((currentTime - startTimeFromDB) / 1000);
+
+      console.log(
+        `[AppContext] Resincronizando timer. Nuevo tiempo: ${elapsedSeconds}s`
+      );
+
+      return {
+        ...state,
+        deliveryTimer: {
+          ...state.deliveryTimer,
+          elapsedTime: elapsedSeconds > 0 ? elapsedSeconds : 0,
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -462,16 +521,85 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isOffline, setIsOffline] = useState(false);
   const isOfflineRef = useRef(isOffline);
   const lastNotificationTimestampRef = useRef(0);
+  const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     isOfflineRef.current = isOffline;
   }, [isOffline]);
 
+  // EFECTO PARA SINCRONIZAR EL TIMER CUANDO LA APP VUELVE A PRIMER PLANO
   useEffect(() => {
-    // Si el seguimiento está activo, creamos un intervalo
+    const handleAppStateChange = (nextAppState: string) => {
+      if (nextAppState === "active") {
+        console.log(
+          "[AppContext] La aplicación ha vuelto a primer plano. Sincronizando timer..."
+        );
+        dispatch({ type: "SYNC_TIMER" });
+      }
+    };
+
+    const subscription = ReactNativeAppState.addEventListener(
+      "change",
+      handleAppStateChange
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  // EFECTO PARA SINCRONIZAR EL TIMER CADA SEGUNDO
+  useEffect(() => {
+    if (state.deliveryTimer.isActive && state.deliveryTimer.startTime) {
+      if (syncTimerRef.current) {
+        clearInterval(syncTimerRef.current);
+      }
+
+      const updateTimer = () => {
+        let startTimeString = state.deliveryTimer.startTime!;
+        if (!startTimeString.endsWith("Z")) {
+          startTimeString += "Z";
+        }
+
+        const startTimeFromDB = new Date(startTimeString).getTime();
+        const currentTime = new Date().getTime();
+        const elapsedSeconds = Math.floor(
+          (currentTime - startTimeFromDB) / 1000
+        );
+
+        if (Math.abs(elapsedSeconds - state.deliveryTimer.elapsedTime) >= 1) {
+          dispatch({
+            type: "UPDATE_TIMER",
+            payload: elapsedSeconds > 0 ? elapsedSeconds : 0,
+          });
+        }
+      };
+
+      updateTimer();
+      syncTimerRef.current = setInterval(updateTimer, 1000);
+
+      return () => {
+        if (syncTimerRef.current) {
+          clearInterval(syncTimerRef.current);
+          syncTimerRef.current = null;
+        }
+      };
+    } else {
+      if (syncTimerRef.current) {
+        clearInterval(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+    }
+  }, [
+    state.deliveryTimer.isActive,
+    state.deliveryTimer.startTime,
+    state.deliveryTimer.elapsedTime,
+  ]);
+
+  // EFECTO PARA SINCRONIZAR PUNTOS DE TRACKING CADA 15 SEGUNDOS
+  useEffect(() => {
     if (state.locationTracking.isTracking) {
       const syncInterval = setInterval(async () => {
-        // Hacemos una copia de los puntos para evitar condiciones de carrera
         const pointsToSync = [...state.locationTracking.trackingPoints];
         if (pointsToSync.length > 0) {
           console.log(
@@ -479,19 +607,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           );
           try {
             if (!isOfflineRef.current) {
-              // Solo si estamos online
               await apiService.logTrackingEvents(pointsToSync);
-              // Si la sincronización es exitosa, limpiamos los puntos del estado
               dispatch({ type: "CLEAR_TRACKING_POINTS" });
             }
           } catch (error) {
             console.error("Fallo la sincronización de tracking points:", error);
-            // No limpiamos la cola, se reintentará en el siguiente intervalo
           }
         }
-      }, 15000); // Sincroniza cada 15 segundos
+      }, 15000);
 
-      // Limpiamos el intervalo cuando el componente se desmonte o el tracking se detenga
       return () => clearInterval(syncInterval);
     }
   }, [
@@ -668,6 +792,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           latitude: parseFloat(clientLocationParts[0]),
           longitude: parseFloat(clientLocationParts[1]),
         };
+
+        // DEBUGGING: Comparar diferentes estimaciones (solo para desarrollo)
+        if (__DEV__) {
+          await googleMapsService.compareRouteEstimates(
+            location,
+            clientDestination
+          );
+        }
 
         const routeDetails = await googleMapsService.getRouteDetails(
           location,

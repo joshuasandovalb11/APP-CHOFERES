@@ -1,34 +1,8 @@
-import { useEffect, useRef } from "react";
 import { useApp } from "@/context/AppContext";
 import LocationService from "@/services/location";
 
 export const useDeliveryTracking = () => {
-  const { state, dispatch } = useApp();
-  const timerRef = useRef<NodeJS.Timeout | number | null>(null);
-
-  // EFECTO PARA MANEJAR EL TEMPORIZADOR DE LA ENTREGA ACTIVA
-  useEffect(() => {
-    if (state.deliveryTimer.isActive && state.deliveryTimer.startTime) {
-      timerRef.current = setInterval(() => {
-        const startTime = new Date(state.deliveryTimer.startTime!).getTime();
-        const currentTime = new Date().getTime();
-        const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
-
-        dispatch({ type: "UPDATE_TIMER", payload: elapsedSeconds });
-      }, 1000);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current as any);
-        timerRef.current = null;
-      }
-    }
-
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current as any);
-      }
-    };
-  }, [state.deliveryTimer.isActive, state.deliveryTimer.startTime, dispatch]);
+  const { state } = useApp();
 
   // Función para obtener el tiempo formateado del cronómetro
   const getFormattedTime = (): string => {

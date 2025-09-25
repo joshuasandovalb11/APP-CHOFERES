@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, Dispatch } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   StyleSheet,
   ScrollView,
@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   Dimensions,
   Modal,
-  Platform,
   Linking,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -14,14 +13,14 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Text, View } from "@/components/Themed";
 import { useApp } from "@/context/AppContext";
 import LocationService from "@/services/location";
-import { Delivery, Location, IncidentReason } from "@/types";
+import { Location, IncidentReason } from "@/types";
 import IncidentModal from "@/components/IncidentModal";
 import MapView, { Marker } from "react-native-maps";
 import * as Notifications from "expo-notifications";
 import * as ExpoLocation from "expo-location";
-import googleMapsService from "@/services/googleMapsService";
+import Timer from "@/components/Timer";
 
-const { width } = Dimensions.get("window");
+Dimensions.get("window");
 
 const GEOFENCING_TASK = "geofencing-task";
 
@@ -398,12 +397,6 @@ export default function DeliveryDetailScreen() {
     }
   };
 
-  // FUNCION PARA FORMATEAR LA DISTANCIA
-  const formatDistance = (distance: number): string => {
-    if (distance < 1000) return `${Math.round(distance)} m`;
-    return `${(distance / 1000).toFixed(1)} km`;
-  };
-
   // FUNCION PARA INICIAR LA NAVEGACION
   const handleNavigate = async () => {
     if (!destinationLocation) {
@@ -501,7 +494,6 @@ export default function DeliveryDetailScreen() {
           <FontAwesome name="chevron-left" size={20} color="#007AFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Detalle de Entrega</Text>
-        {/* <View style={styles.headerSpacer} /> */}
         {delivery &&
           delivery.status !== "completed" &&
           delivery.status !== "cancelled" && (
@@ -544,6 +536,15 @@ export default function DeliveryDetailScreen() {
             <Text style={styles.statusText}>
               {getStatusText(delivery.status)}
             </Text>
+            {delivery.status === "in_progress" && (
+              <Text style={styles.headerSpacer}></Text>
+            )}
+            {delivery.status === "in_progress" && (
+              <View style={styles.timerContainer}>
+                <FontAwesome name="clock-o" size={16} color="#007AFF" />
+                <Timer />
+              </View>
+            )}
           </View>
         </View>
 
@@ -803,7 +804,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerSpacer: {
-    width: 30,
+    width: 20,
   },
   headerButton: {
     width: 40,
@@ -838,6 +839,14 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  timerContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffffff",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 20,
   },
   section: {
     marginBottom: 15,

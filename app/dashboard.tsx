@@ -16,6 +16,7 @@ import { useDeliveryTracking } from "@/hooks/useDeliveryTracking";
 import { Delivery } from "@/types";
 import SettingsMenu from "@/components/SettingsMenu";
 import * as Notifications from "expo-notifications";
+import Timer from "@/components/Timer";
 
 export default function DashboardScreen() {
   const { state, logout, dispatch, isOffline } = useApp();
@@ -127,7 +128,7 @@ export default function DashboardScreen() {
     });
   };
 
-  const { currentDelivery, completedDeliveries } = state.deliveryStatus;
+  const { currentDelivery } = state.deliveryStatus;
 
   // Ordenamos las entregas pendientes (incluyendo la que está en progreso)
   const sortedPendingDeliveries = useMemo(() => {
@@ -435,10 +436,12 @@ export default function DashboardScreen() {
       <View style={styles.header}>
         <View style={styles.headerInfo}>
           <Text style={styles.driverName}>Hola, {state.driver.username}</Text>
-          <Text style={styles.vehicleInfo}>
+          {/* <Text style={styles.vehicleInfo}>
             {state.driver.vehicle_plate} - {state.driver.num_unity}
+          </Text> */}
+          <Text style={styles.fecInfo}>
+            # FEC: {state.currentFEC.fec_number}
           </Text>
-          <Text style={styles.fecInfo}>FEC: {state.currentFEC.fec_number}</Text>
         </View>
         <TouchableOpacity onPress={() => setMenuVisible(true)}>
           <FontAwesome name="bars" size={25} color="#007AFF" />
@@ -470,12 +473,10 @@ export default function DashboardScreen() {
                     {deliveryToShow.client?.client_id || "ID desconocido"} -{" "}
                     {deliveryToShow.client?.name || "Cliente desconocido"}
                   </Text>
-                  {tracking.isTimerActive && (
+                  {deliveryToShow.status === "in_progress" && (
                     <View style={styles.timerContainer}>
                       <FontAwesome name="clock-o" size={16} color="#007AFF" />
-                      <Text style={styles.timerText}>
-                        {tracking.formattedTime}
-                      </Text>
+                      <Timer />
                     </View>
                   )}
                 </View>
@@ -712,7 +713,9 @@ const styles = StyleSheet.create({
   },
   fecInfo: {
     fontSize: 12,
-    color: "#999",
+    // color: "#999",
+    color: "#666",
+    fontWeight: "500",
   },
   logoutButton: {
     paddingBottom: 40,
