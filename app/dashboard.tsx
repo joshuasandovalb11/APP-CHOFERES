@@ -440,7 +440,7 @@ export default function DashboardScreen() {
             {state.driver.vehicle_plate} - {state.driver.num_unity}
           </Text> */}
           <Text style={styles.fecInfo}>
-            # FEC: {state.currentFEC.fec_number}
+            FEC: #{state.currentFEC.fec_number}
           </Text>
         </View>
         <TouchableOpacity onPress={() => setMenuVisible(true)}>

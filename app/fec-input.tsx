@@ -6,7 +6,8 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Alert, // Importar Alert para mensajes nativos
+  Alert,
+  ScrollView,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Text, View } from "@/components/Themed";
@@ -175,7 +176,11 @@ export default function FECInputScreen() {
         onClose={() => setModalVisible(false)}
       />
 
-      <View style={styles.content}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.header}>
           <Text style={styles.title}>Verificar FEC</Text>
           <Text style={styles.subtitle}>
@@ -216,7 +221,7 @@ export default function FECInputScreen() {
             <Text style={styles.backButtonText}>Volver</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -224,9 +229,10 @@ export default function FECInputScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "white",
   },
-  content: {
-    flex: 1,
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 30,

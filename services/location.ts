@@ -1,9 +1,76 @@
 import * as Location from "expo-location";
-import { Linking, Platform, Alert } from "react-native";
-import { Location as LocationType } from "../types";
+import { Linking, Alert } from "react-native";
+import { Delivery, Location as LocationType } from "../types";
+import * as Notifications from "expo-notifications";
+
+const LOCATION_TASK_NAME = "background-location-task";
 
 export class LocationService {
   private watchId: Location.LocationSubscription | null = null;
+  private persistentNotificationId: string | null = null;
+
+  async startForegroundUpdate(delivery: Delivery): Promise<void> {
+    const hasPermission = await this.checkAndRequestLocationPermissions();
+    if (!hasPermission) {
+      console.log("No se pudo iniciar el servicio por falta de permisos.");
+      return;
+    }
+
+    if (this.persistentNotificationId) {
+      await Notifications.dismissNotificationAsync(
+        this.persistentNotificationId
+      );
+    }
+
+    const distance = delivery.estimated_distance || "Calculando...";
+    const duration = delivery.estimated_duration || "Calculando...";
+
+    console.log(
+      `[LocationService] Creando notificación con: ${distance}, ${duration}`
+    );
+
+    const notificationId = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: `🚚 En ruta hacia: ${delivery.client?.name || "Cliente"}`,
+        body: `Entrega #${delivery.delivery_id} | ${distance} | ${duration}`,
+        data: {
+          deliveryId: delivery.delivery_id,
+          type: "delivery_in_progress",
+          persistent: true,
+        },
+        priority: Notifications.AndroidNotificationPriority.MAX,
+        sticky: true,
+        autoDismiss: false,
+      },
+      trigger: null,
+    });
+
+    this.persistentNotificationId = notificationId;
+
+    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+      accuracy: Location.Accuracy.BestForNavigation,
+      showsBackgroundLocationIndicator: true,
+    });
+
+    console.log("Servicio INICIADO para la entrega:", delivery.delivery_id);
+  }
+
+  async stopForegroundUpdate(): Promise<void> {
+    if (this.persistentNotificationId) {
+      await Notifications.dismissNotificationAsync(
+        this.persistentNotificationId
+      );
+      this.persistentNotificationId = null;
+    }
+
+    const isTracking = await Location.hasStartedLocationUpdatesAsync(
+      LOCATION_TASK_NAME
+    );
+    if (isTracking) {
+      await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+      console.log("Servicio DETENIDO.");
+    }
+  }
 
   /**
    * Verifica y solicita permisos de ubicación de forma inteligente.

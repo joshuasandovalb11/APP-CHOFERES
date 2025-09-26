@@ -8,19 +8,13 @@ import {
 } from "../types";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-// Para desarrollo local: Reemplaza 'TU_IP_LOCAL' con la dirección IP de tu computadora.
-// Recuerda iniciar el backend con: uvicorn app.main:app --reload --host 0.0.0.0
 const DEV_API_URL = "http://192.168.1.129:8000";
+const PROD_API_URL = "https://entregas-backend-d4oy.onrender.com";
 
-// Para producción: Esta será la URL de tu servidor cuando lo despliegues.
-const PROD_API_URL = "https://api.tu-empresa.com"; // <-- URL de ejemplo
-
-// 2. LÓGICA PARA SELECCIONAR LA URL CORRECTA
 const API_BASE_URL = __DEV__ ? DEV_API_URL : PROD_API_URL;
+// const API_BASE_URL = PROD_API_URL;
 
 console.log(`La aplicación está usando la API en: ${API_BASE_URL}`);
-
-// --- CLASE DEL SERVICIO DE API ---
 
 class ApiService {
   // Función privada para obtener el token de autenticación guardado
@@ -123,7 +117,6 @@ class ApiService {
    * en una sola llamada, tal como lo diseñamos en el backend.
    */
   async logTrackingEvents(events: TrackingPoint[]): Promise<void> {
-    // El backend espera un status 202, que no devuelve contenido.
     await this.request<void>(`/deliveries/events/log`, {
       method: "POST",
       body: JSON.stringify(events),

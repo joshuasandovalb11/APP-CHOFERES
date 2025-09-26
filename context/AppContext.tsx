@@ -25,6 +25,7 @@ import googleMapsService from "@/services/googleMapsService";
 import * as Notifications from "expo-notifications";
 import { apiService } from "@/services/api";
 import { AppState as ReactNativeAppState } from "react-native";
+import locationService from "@/services/location";
 
 interface AppState extends AuthState {
   deliveryStatus: {
@@ -778,12 +779,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Actualización optimista en la UI
-    dispatch({ type: "START_DELIVERY", payload: deliveryId });
-    dispatch({ type: "START_TIMER", payload: new Date().toISOString() });
-
     let estimatedDuration: string | undefined = undefined;
     let estimatedDistance: string | undefined = undefined;
+    let deliveryToStart = deliveryData;
 
     if (deliveryData?.client?.gps_location) {
       try {
@@ -792,14 +790,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           latitude: parseFloat(clientLocationParts[0]),
           longitude: parseFloat(clientLocationParts[1]),
         };
-
-        // DEBUGGING: Comparar diferentes estimaciones (solo para desarrollo)
-        if (__DEV__) {
-          await googleMapsService.compareRouteEstimates(
-            location,
-            clientDestination
-          );
-        }
 
         const routeDetails = await googleMapsService.getRouteDetails(
           location,
@@ -810,17 +800,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           estimatedDuration = routeDetails.duration.text;
           estimatedDistance = routeDetails.distance.text;
 
-          dispatch({
-            type: "SET_ROUTE_DETAILS",
-            payload: {
-              deliveryId,
-              distance: estimatedDistance,
-              duration: estimatedDuration,
-            },
-          });
+          deliveryToStart = {
+            ...deliveryData,
+            estimated_distance: estimatedDistance,
+            estimated_duration: estimatedDuration,
+          };
 
           console.log(
-            `[AppContext] Duración estimada para la entrega ${deliveryId}: ${estimatedDuration}, Distancia: ${estimatedDistance}`
+            `[AppContext] Datos calculados: ${estimatedDistance}, ${estimatedDuration}`
           );
         }
       } catch (e) {
@@ -828,10 +815,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    logDeliveryEvent("start_delivery", deliveryId, location, {
-      estimatedDuration,
-      estimatedDistance,
-    });
+    dispatch({ type: "START_DELIVERY", payload: deliveryId });
+    dispatch({ type: "START_TIMER", payload: new Date().toISOString() });
+
+    if (estimatedDistance && estimatedDuration) {
+      dispatch({
+        type: "SET_ROUTE_DETAILS",
+        payload: {
+          deliveryId,
+          distance: estimatedDistance,
+          duration: estimatedDuration,
+        },
+      });
+    }
+
+    try {
+      await locationService.startForegroundUpdate(deliveryToStart);
+    } catch (error) {
+      console.error("Error iniciando el servicio de ubicación:", error);
+    }
 
     const eventPayload: TrackingPoint = {
       ...location,

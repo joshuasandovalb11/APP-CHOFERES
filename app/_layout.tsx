@@ -25,6 +25,23 @@ import { AppProvider, useApp } from "@/context/AppContext";
 import locationService from "@/services/location";
 
 const GEOFENCING_TASK = "geofencing-task";
+const LOCATION_TASK_NAME = "background-location-task";
+
+TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
+  if (error) {
+    console.error("TaskManager (Location) Error:", error);
+    return;
+  }
+  if (data) {
+    const { locations } = data as { locations: Location.LocationObject[] };
+    const latestLocation = locations[0];
+    console.log(
+      "📍 Ubicación recibida en segundo plano:",
+      latestLocation.coords
+    );
+  }
+  return null;
+});
 
 // Definición de la tarea de geofencing
 TaskManager.defineTask(GEOFENCING_TASK, async ({ data, error }) => {
@@ -92,14 +109,28 @@ export default function RootLayout() {
       // Pedir permisos de notificación
       await Notifications.requestPermissionsAsync();
 
-      // Configuración específica para Android
       if (Device.osName === "Android") {
-        // Crear el canal de notificación para la entrega en progreso
         await Notifications.setNotificationChannelAsync("delivery-ongoing", {
           name: "Entregas en progreso",
           importance: Notifications.AndroidImportance.HIGH,
           vibrationPattern: [0],
           sound: null,
+          lockscreenVisibility:
+            Notifications.AndroidNotificationVisibility.PUBLIC,
+          bypassDnd: true,
+          showBadge: true,
+        });
+
+        // Nuevo canal para notificaciones persistentes
+        await Notifications.setNotificationChannelAsync("delivery-persistent", {
+          name: "Seguimiento de Entregas",
+          importance: Notifications.AndroidImportance.HIGH,
+          vibrationPattern: [0],
+          sound: null,
+          lockscreenVisibility:
+            Notifications.AndroidNotificationVisibility.PUBLIC,
+          bypassDnd: true,
+          showBadge: true,
         });
       }
     };

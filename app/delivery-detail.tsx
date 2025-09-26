@@ -19,6 +19,7 @@ import MapView, { Marker } from "react-native-maps";
 import * as Notifications from "expo-notifications";
 import * as ExpoLocation from "expo-location";
 import Timer from "@/components/Timer";
+import locationService from "@/services/location";
 
 Dimensions.get("window");
 
@@ -135,7 +136,7 @@ export default function DeliveryDetailScreen() {
         delivery.delivery_id;
 
       if (isActiveDelivery) {
-        await stopNotificationsAndGeofencing();
+        await locationService.stopForegroundUpdate();
       }
       reportIncident(delivery.delivery_id, reason, notes);
       setIncidentModalVisible(false);
@@ -160,36 +161,6 @@ export default function DeliveryDetailScreen() {
     if (delivery) {
       let phoneUrl = `tel:${delivery.client?.phone}`;
       Linking.openURL(phoneUrl);
-    }
-  };
-
-  // FUNCIÓN PARA MOSTRAR LA NOTIFICACIÓN PERSISTENTE
-  const showOngoingDeliveryNotification = async (deliveryId: number) => {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "Entrega en progreso",
-        body: `En camino a la entrega #${deliveryId}. Toca para ver detalles.`,
-        sticky: true,
-        autoDismiss: false,
-        sound: true,
-        data: { deliveryId: deliveryId },
-      },
-      trigger: {
-        channelId: "delivery-ongoing",
-      },
-      identifier: `delivery-${deliveryId}`,
-    });
-  };
-
-  // FUNCIÓN PARA DETENER Y LIMPIAR TODO
-  const stopNotificationsAndGeofencing = async () => {
-    await Notifications.dismissAllNotificationsAsync();
-
-    const isTaskRunning = await ExpoLocation.hasStartedGeofencingAsync(
-      GEOFENCING_TASK
-    );
-    if (isTaskRunning) {
-      await ExpoLocation.stopGeofencingAsync(GEOFENCING_TASK);
     }
   };
 
@@ -230,7 +201,7 @@ export default function DeliveryDetailScreen() {
             try {
               await startDelivery(delivery.delivery_id);
 
-              await showOngoingDeliveryNotification(delivery.delivery_id);
+              // await locationService.startForegroundUpdate(delivery);
               if (destinationLocation) {
                 await ExpoLocation.startGeofencingAsync(GEOFENCING_TASK, [
                   {
@@ -288,7 +259,7 @@ export default function DeliveryDetailScreen() {
                   currentLocation
                 );
               }
-              await stopNotificationsAndGeofencing();
+              await locationService.stopForegroundUpdate();
               completeDelivery(delivery.delivery_id);
               router.back();
             } catch (error) {
@@ -345,7 +316,7 @@ export default function DeliveryDetailScreen() {
   //             text: "Completar",
   //             onPress: async () => {
   //               hideModal();
-  //               await stopNotificationsAndGeofencing();
+  //               await locationService.stopForegroundUpdate();
   //               logDeliveryEvent(
   //                 "end_delivery",
   //                 delivery.delivery_id,
