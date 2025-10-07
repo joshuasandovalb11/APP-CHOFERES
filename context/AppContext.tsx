@@ -8,7 +8,7 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import NetInfo from "@react-native-community/netinfo";
+import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   AuthState,
@@ -41,9 +41,10 @@ interface AppState extends AuthState {
     startTime: string | null;
     elapsedTime: number;
   };
-  locationTracking: {
-    isTracking: boolean;
-    trackingPoints: TrackingPoint[];
+  journeyTracking: {
+    isActive: boolean;
+    pendingSyncQueue: TrackingPoint[];
+    lastSyncTimestamp: number;
   };
   currentlyViewedDeliveryId: number | null;
 }
@@ -72,8 +73,9 @@ type AppAction =
   | { type: "STOP_TIMER" }
   | { type: "START_JOURNEY_TRACKING" }
   | { type: "STOP_JOURNEY_TRACKING" }
-  | { type: "ADD_TRACKING_POINT"; payload: TrackingPoint }
-  | { type: "CLEAR_TRACKING_POINTS" }
+  | { type: "ADD_JOURNEY_POINT"; payload: TrackingPoint }
+  | { type: "ADD_POINTS_TO_SYNC_QUEUE"; payload: TrackingPoint[] }
+  | { type: "CLEAR_SYNCED_POINTS" }
   | {
       type: "SET_OPTIMIZED_ROUTE";
       payload: {
@@ -90,7 +92,8 @@ type AppAction =
       type: "SET_ROUTE_DETAILS";
       payload: { deliveryId: number; distance: string; duration: string };
     }
-  | { type: "SYNC_TIMER" };
+  | { type: "SYNC_TIMER" }
+  | { type: "REMOVE_SYNCED_POINTS"; payload: number };
 
 const initialState: AppState = {
   isLoggedIn: false,
@@ -109,9 +112,10 @@ const initialState: AppState = {
     startTime: null,
     elapsedTime: 0,
   },
-  locationTracking: {
-    isTracking: false,
-    trackingPoints: [],
+  journeyTracking: {
+    isActive: false,
+    pendingSyncQueue: [],
+    lastSyncTimestamp: 0,
   },
   currentlyViewedDeliveryId: null,
 };
@@ -177,9 +181,10 @@ function appReducer(state: AppState, action: AppAction): AppState {
           cancelledDeliveries: cancelledDeliveries,
         },
         deliveryTimer: restoredTimerState,
-        locationTracking: {
-          isTracking: false,
-          trackingPoints: [],
+        journeyTracking: {
+          isActive: false,
+          pendingSyncQueue: [],
+          lastSyncTimestamp: 0,
         },
       };
 
@@ -270,11 +275,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case "LOGOUT":
       return { ...initialState };
+
     case "SET_LOCATION":
       return {
         ...state,
         currentLocation: action.payload,
       };
+
     case "START_TIMER":
       return {
         ...state,
@@ -284,11 +291,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
           startTime: action.payload,
         },
       };
+
     case "UPDATE_TIMER":
       return {
         ...state,
         deliveryTimer: { ...state.deliveryTimer, elapsedTime: action.payload },
       };
+
     case "STOP_TIMER":
       return {
         ...state,
@@ -298,32 +307,58 @@ function appReducer(state: AppState, action: AppAction): AppState {
           elapsedTime: 0,
         },
       };
+
     case "START_JOURNEY_TRACKING":
       return {
         ...state,
-        locationTracking: { ...state.locationTracking, isTracking: true },
+        journeyTracking: { ...state.journeyTracking, isActive: true },
       };
+
     case "STOP_JOURNEY_TRACKING":
       return {
         ...state,
-        locationTracking: { ...state.locationTracking, isTracking: false },
+        journeyTracking: { ...state.journeyTracking, isActive: false },
       };
-    case "ADD_TRACKING_POINT":
+
+    case "ADD_JOURNEY_POINT":
       return {
         ...state,
-        locationTracking: {
-          ...state.locationTracking,
-          trackingPoints: [
-            ...state.locationTracking.trackingPoints,
+        journeyTracking: {
+          ...state.journeyTracking,
+          pendingSyncQueue: [
+            ...state.journeyTracking.pendingSyncQueue,
             action.payload,
           ],
         },
       };
 
-    case "CLEAR_TRACKING_POINTS":
+    case "ADD_POINTS_TO_SYNC_QUEUE":
+      const newPoints = (action.payload as TrackingPoint[]).map((p) => ({
+        ...p,
+        eventType: state.deliveryStatus.hasActiveDelivery
+          ? ("delivery_journey" as TrackingEventType)
+          : ("journey" as TrackingEventType),
+        deliveryId: state.deliveryStatus.currentDelivery?.delivery_id,
+      })) as TrackingPoint[];
       return {
         ...state,
-        locationTracking: { ...state.locationTracking, trackingPoints: [] },
+        journeyTracking: {
+          ...state.journeyTracking,
+          pendingSyncQueue: [
+            ...state.journeyTracking.pendingSyncQueue,
+            ...newPoints,
+          ],
+        },
+      };
+
+    case "CLEAR_SYNCED_POINTS":
+      return {
+        ...state,
+        journeyTracking: {
+          ...state.journeyTracking,
+          pendingSyncQueue: [],
+          lastSyncTimestamp: Date.now(),
+        },
       };
 
     case "SET_OPTIMIZED_ROUTE":
@@ -465,6 +500,19 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "REMOVE_SYNCED_POINTS": {
+      const countToRemove = action.payload as number;
+      return {
+        ...state,
+        journeyTracking: {
+          ...state.journeyTracking,
+          // Elimina los primeros 'n' elementos que ya fueron enviados con éxito
+          pendingSyncQueue:
+            state.journeyTracking.pendingSyncQueue.slice(countToRemove),
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -480,8 +528,8 @@ const AppContext = createContext<{
   startDelivery: (deliveryId: number) => void;
   completeDelivery: (deliveryId: number) => void;
   updateLocation: (location?: Location) => void;
-  startJourneyTracking: () => void;
-  stopJourneyTracking: () => void;
+  startDailyJourney: () => Promise<void>;
+  stopDailyJourney: () => Promise<void>;
   logDeliveryEvent: (
     eventType: TrackingEventType,
     deliveryId: number,
@@ -509,13 +557,15 @@ const AppContext = createContext<{
   startDelivery: () => {},
   completeDelivery: () => {},
   updateLocation: async () => {},
-  startJourneyTracking: () => {},
-  stopJourneyTracking: () => {},
+  startDailyJourney: async () => {},
+  stopDailyJourney: async () => {},
   logDeliveryEvent: () => {},
   setOptimizedRoute: async () => null,
   setViewedDeliveryId: () => {},
   reportIncident: async () => {},
 });
+
+const BACKGROUND_TRACKING_STORAGE_KEY = "background_tracking_queue";
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
@@ -523,10 +573,85 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const isOfflineRef = useRef(isOffline);
   const lastNotificationTimestampRef = useRef(0);
   const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stateRef = useRef(state);
+  const netInfoRef = useRef({ isConnected: !isOffline });
 
   useEffect(() => {
     isOfflineRef.current = isOffline;
   }, [isOffline]);
+
+  // Este useEffect mantiene nuestra referencia de estado siempre actualizada.
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  // Este useEffect se suscribe a los cambios de conexión a internet.
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((netState: NetInfoState) => {
+      const offline = !(netState.isConnected && netState.isInternetReachable);
+      setIsOffline(offline);
+      netInfoRef.current = { isConnected: !offline }; // Actualizamos la referencia
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Procesa los puntos guardados por el TaskManager
+  const processStoredTrackingPoints = async () => {
+    try {
+      const storedPointsJSON = await AsyncStorage.getItem(
+        BACKGROUND_TRACKING_STORAGE_KEY
+      );
+      if (!storedPointsJSON) {
+        return; // No hay nada que procesar
+      }
+
+      const storedPoints = JSON.parse(storedPointsJSON);
+      if (storedPoints.length === 0) {
+        return;
+      }
+
+      // Limpiamos el buzón INMEDIATAMENTE para evitar duplicados
+      await AsyncStorage.removeItem(BACKGROUND_TRACKING_STORAGE_KEY);
+
+      console.log(
+        `[AppContext] Recolectados ${storedPoints.length} puntos del background.`
+      );
+
+      // Añadimos los puntos a nuestra cola de sincronización en el estado
+      dispatch({ type: "ADD_POINTS_TO_SYNC_QUEUE", payload: storedPoints });
+    } catch (e) {
+      console.error("[AppContext] Error procesando puntos de AsyncStorage:", e);
+    }
+  };
+
+  // Se ejecuta periódicamente para recolectar los puntos
+  useEffect(() => {
+    let processingInterval: ReturnType<typeof setInterval>;
+
+    // Solo intentamos recolectar si el tracking está activo
+    if (state.journeyTracking.isActive) {
+      // Lo ejecutamos una vez al inicio por si había puntos de una sesión anterior
+      processStoredTrackingPoints();
+
+      // Y luego lo configuramos para que se ejecute cada 30 segundos
+      processingInterval = setInterval(() => {
+        processStoredTrackingPoints();
+      }, 30000);
+
+      console.log("[AppContext] Recolector de puntos de background INICIADO.");
+    }
+
+    return () => {
+      if (processingInterval) {
+        clearInterval(processingInterval);
+        console.log(
+          "[AppContext] Recolector de puntos de background DETENIDO."
+        );
+        // Intentamos procesar una última vez al detener
+        processStoredTrackingPoints();
+      }
+    };
+  }, [state.journeyTracking.isActive]);
 
   // EFECTO PARA SINCRONIZAR EL TIMER CUANDO LA APP VUELVE A PRIMER PLANO
   useEffect(() => {
@@ -597,32 +722,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     state.deliveryTimer.elapsedTime,
   ]);
 
-  // EFECTO PARA SINCRONIZAR PUNTOS DE TRACKING CADA 15 SEGUNDOS
+  // EFECTO PARA SINCRONIZAR PUNTOS DE TRACKING CADA 10 MINUTOS
   useEffect(() => {
-    if (state.locationTracking.isTracking) {
-      const syncInterval = setInterval(async () => {
-        const pointsToSync = [...state.locationTracking.trackingPoints];
-        if (pointsToSync.length > 0) {
-          console.log(
-            `Sincronizando ${pointsToSync.length} puntos de tracking...`
-          );
-          try {
-            if (!isOfflineRef.current) {
-              await apiService.logTrackingEvents(pointsToSync);
-              dispatch({ type: "CLEAR_TRACKING_POINTS" });
-            }
-          } catch (error) {
-            console.error("Fallo la sincronización de tracking points:", error);
-          }
-        }
-      }, 15000);
+    if (!state.journeyTracking.isActive) return;
 
-      return () => clearInterval(syncInterval);
-    }
-  }, [
-    state.locationTracking.isTracking,
-    state.locationTracking.trackingPoints,
-  ]);
+    const syncInterval = setInterval(() => {
+      syncPendingJourneyPoints();
+    }, 3 * 60 * 1000);
+
+    return () => clearInterval(syncInterval);
+  }, [state.journeyTracking.isActive]);
 
   // EFECTO PARA ESCUCHAR EL ESTADO DE LA RED
   useEffect(() => {
@@ -830,7 +939,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      await locationService.startForegroundUpdate(deliveryToStart);
+      await AsyncStorage.setItem("activeDeliveryId", deliveryId.toString());
+      await locationService.startDeliveryTracking(deliveryToStart);
     } catch (error) {
       console.error("Error iniciando el servicio de ubicación:", error);
     }
@@ -899,6 +1009,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     dispatch({ type: "COMPLETE_DELIVERY", payload: deliveryId });
     dispatch({ type: "STOP_TIMER" });
+
+    await AsyncStorage.removeItem("activeDeliveryId");
+    await locationService.stopDeliveryTracking();
+
+    // Si hay más entregas pendientes, volver a modo journey
+    if (state.deliveryStatus.nextDeliveries.length > 0) {
+      await locationService.startJourneyTracking();
+      console.log("[AppContext] Volviendo a modo journey tracking");
+    }
   };
 
   const reportIncident = async (
@@ -945,64 +1064,112 @@ export function AppProvider({ children }: { children: ReactNode }) {
       payload: { deliveryId, reason, notes },
     });
     if (state.deliveryStatus.currentDelivery?.delivery_id === deliveryId) {
+      await AsyncStorage.removeItem("activeDeliveryId");
+      await locationService.stopDeliveryTracking();
       dispatch({ type: "STOP_TIMER" });
     }
   };
 
   // Funcion para iniciar el seguimiento del viaje
-  const startJourneyTracking = () => {
-    if (state.locationTracking.isTracking) {
-      console.log("[AppContext] El seguimiento de la jornada ya está activo.");
-      return;
+  const startDailyJourney = async () => {
+    try {
+      await locationService.startJourneyTracking();
+      dispatch({ type: "START_JOURNEY_TRACKING" });
+      console.log("[AppContext] Jornada diaria INICIADA");
+    } catch (error) {
+      console.error("[AppContext] Error iniciando tracking:", error);
+      throw error;
     }
-
-    dispatch({ type: "START_JOURNEY_TRACKING" });
-    LocationService.startLocationTracking((location) => {
-      console.log(
-        `📍 Nuevo punto de tracking capturado: ${new Date().toLocaleTimeString()}`,
-        location
-      );
-      const trackingPoint: TrackingPoint = {
-        latitude: location.latitude,
-        longitude: location.longitude,
-        timestamp: new Date().toISOString(),
-        eventType: "journey",
-        deliveryId: state.deliveryStatus.currentDelivery?.delivery_id,
-      };
-      dispatch({ type: "ADD_TRACKING_POINT", payload: trackingPoint });
-    });
   };
 
   // Función para detener el seguimiento del viaje
-  const stopJourneyTracking = () => {
-    LocationService.stopLocationTracking();
+  const stopDailyJourney = async () => {
+    // Sincronizar puntos pendientes ANTES de detener
+    await syncPendingJourneyPoints();
+    await locationService.stopAllTracking();
     dispatch({ type: "STOP_JOURNEY_TRACKING" });
+    console.log("[AppContext] Jornada diaria DETENIDA");
+  };
+
+  // ============================================
+  // FUNCIÓN DE SINCRONIZACIÓN OPTIMIZADA
+  // ============================================
+  const syncPendingJourneyPoints = async () => {
+    const points = state.journeyTracking.pendingSyncQueue;
+
+    if (points.length === 0 || isOfflineRef.current) {
+      return;
+    }
+
+    // Sincronizar con umbrales diferentes según el tipo de puntos
+    const journeyPoints = points.filter((p) => p.eventType === "journey");
+    const deliveryPoints = points.filter(
+      (p) => p.eventType === "delivery_journey"
+    );
+
+    const timeSinceLastSync =
+      Date.now() - state.journeyTracking.lastSyncTimestamp;
+
+    const shouldSync =
+      points.length >= 10 || // Si hay muchos puntos de cualquier tipo
+      (journeyPoints.length >= 3 && timeSinceLastSync > 5 * 60 * 1000) || // Journey: 3 puntos y 5 min
+      (deliveryPoints.length >= 5 && timeSinceLastSync > 2 * 60 * 1000) || // Delivery: 5 puntos y 2 min
+      timeSinceLastSync > 10 * 60 * 1000; // O cada 10 minutos sin importar cantidad
+
+    if (!shouldSync) {
+      console.log(
+        `[Sync] Esperando más puntos. Actual: ${points.length} (${journeyPoints.length} journey, ${deliveryPoints.length} delivery)`
+      );
+      return;
+    }
+
+    try {
+      console.log(
+        `[Sync] Enviando ${points.length} puntos al backend (${journeyPoints.length} journey, ${deliveryPoints.length} delivery)...`
+      );
+
+      await apiService.logTrackingPoints(points);
+      dispatch({ type: "CLEAR_SYNCED_POINTS" });
+
+      console.log(
+        `[Sync] ✅ ${points.length} puntos sincronizados exitosamente`
+      );
+    } catch (error) {
+      console.error("[Sync] ❌ Error sincronizando:", error);
+    }
   };
 
   // Función para registrar un evento de entrega
   const logDeliveryEvent = async (
     eventType: TrackingEventType,
     deliveryId: number,
-    location: Location,
-    details?: { estimatedDuration?: string; estimatedDistance?: string }
+    location: Location | null,
+    details: {
+      estimatedDuration?: string | null;
+      estimatedDistance?: string | null;
+    } = {}
   ) => {
-    if (isOffline) {
-      const event: OfflineEvent = {
-        type: "log_event",
-        payload: { eventType, deliveryId, location },
-        timestamp: Date.now(),
-      };
-      await addEventToQueue(event);
+    if (!location) {
+      console.warn(
+        "[AppContext] Intento de registrar evento sin ubicación. Cancelado."
+      );
       return;
     }
+
     const eventPoint: TrackingPoint = {
-      ...location,
+      latitude: location.latitude,
+      longitude: location.longitude,
       timestamp: new Date().toISOString(),
       eventType,
       deliveryId,
       ...details,
     };
-    dispatch({ type: "ADD_TRACKING_POINT", payload: eventPoint });
+
+    dispatch({ type: "ADD_POINTS_TO_SYNC_QUEUE", payload: [eventPoint] });
+
+    setTimeout(() => {
+      flushTrackingPoints();
+    }, 500);
   };
 
   // Funcion para establecer la ruta optimizada
@@ -1086,22 +1253,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const flushTrackingPoints = async () => {
-    const pointsToSync = [...state.locationTracking.trackingPoints];
+    // Usamos una referencia para asegurarnos de tener siempre el estado más actualizado
+    const currentQueue = stateRef.current.journeyTracking.pendingSyncQueue;
+    const isOffline = !netInfoRef.current?.isConnected;
 
-    if (pointsToSync.length === 0 || isOfflineRef.current) {
+    if (isOffline) {
+      console.log("[AppContext] Sin conexión. Sincronización en pausa.");
       return;
     }
 
+    if (currentQueue.length === 0) {
+      // console.log("[AppContext] No hay puntos para sincronizar."); // Puedes descomentar esto para depurar
+      return;
+    }
+
+    // Creamos una copia de los puntos a enviar. NO modificamos el estado todavía.
+    const pointsToSync = [...currentQueue];
+
     try {
+      // 1. Intentamos enviar el lote de puntos
+      await apiService.logTrackingEvents(pointsToSync);
       console.log(
-        `[AppContext] Intentando sincronizar lote de ${pointsToSync.length} puntos.`
+        `[AppContext] ✅ Lote de ${pointsToSync.length} puntos sincronizado exitosamente.`
       );
-      await apiService.logTrackingPoints(pointsToSync);
-      dispatch({ type: "CLEAR_TRACKING_POINTS" });
-      console.log(`[AppContext] Lote sincronizado exitosamente.`);
+
+      // 2. SOLO SI EL ENVÍO FUE EXITOSO, eliminamos los puntos enviados de la cola
+      dispatch({ type: "REMOVE_SYNCED_POINTS", payload: pointsToSync.length });
     } catch (error) {
+      // Si hay un error, los puntos permanecen en la cola para el siguiente intento. ¡No se pierden datos!
       console.error(
-        "[AppContext] Error al sincronizar lote de tracking. Se reintentará en el siguiente ciclo.",
+        "[AppContext] ❌ Error al sincronizar. Los puntos se conservan para el siguiente reintento.",
         error
       );
     }
@@ -1110,7 +1291,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let batchInterval: ReturnType<typeof setInterval>;
 
-    if (state.locationTracking.isTracking) {
+    if (state.journeyTracking.isActive) {
       batchInterval = setInterval(() => {
         flushTrackingPoints();
       }, 60000);
@@ -1129,7 +1310,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         flushTrackingPoints();
       }
     };
-  }, [state.locationTracking.isTracking]);
+  }, [state.journeyTracking.isActive]);
 
   return (
     <AppContext.Provider
@@ -1142,8 +1323,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         startDelivery,
         completeDelivery,
         updateLocation,
-        startJourneyTracking,
-        stopJourneyTracking,
+        startDailyJourney,
+        stopDailyJourney,
         logDeliveryEvent,
         setOptimizedRoute,
         setViewedDeliveryId,

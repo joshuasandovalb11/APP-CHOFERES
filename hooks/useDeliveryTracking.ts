@@ -23,7 +23,7 @@ export const useDeliveryTracking = () => {
 
   // Función para calcular la distancia total recorrida durante toda la jornada
   const getTotalDistance = (): number => {
-    const points = state.locationTracking.trackingPoints;
+    const points = state.journeyTracking.pendingSyncQueue;
     if (points.length < 2) return 0;
 
     let totalDistance = 0;
@@ -39,7 +39,7 @@ export const useDeliveryTracking = () => {
   return {
     isTimerActive: state.deliveryTimer.isActive,
     formattedTime: getFormattedTime(),
-    isTracking: state.locationTracking.isTracking,
+    isTracking: state.journeyTracking.isActive,
     totalDistance: getTotalDistance(),
   };
 };

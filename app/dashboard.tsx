@@ -19,7 +19,7 @@ import * as Notifications from "expo-notifications";
 import Timer from "@/components/Timer";
 
 export default function DashboardScreen() {
-  const { state, logout, dispatch, isOffline } = useApp();
+  const { state, logout, dispatch, isOffline, stopDailyJourney } = useApp();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedTab, setSelectedTab] = useState(0);
   const tracking = useDeliveryTracking();
@@ -115,8 +115,9 @@ export default function DashboardScreen() {
   };
 
   // Maneja el cierre de sesión manual.
-  const handleLogout = () => {
+  const handleLogout = async () => {
     cleanupTimers();
+    await stopDailyJourney();
     setLogoutModalVisible(true);
   };
 
@@ -627,6 +628,7 @@ export default function DashboardScreen() {
                 style={[styles.modalButton, styles.modalButtonConfirm]}
                 onPress={async () => {
                   setLogoutModalVisible(false);
+                  await stopDailyJourney();
                   await logout();
                 }}
               >
@@ -989,3 +991,6 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 });
+function stopDailyJourney() {
+  throw new Error("Function not implemented.");
+}

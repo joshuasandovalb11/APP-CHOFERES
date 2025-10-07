@@ -23,24 +23,193 @@ import * as Device from "expo-device";
 import { useColorScheme } from "@/components/useColorScheme";
 import { AppProvider, useApp } from "@/context/AppContext";
 import locationService from "@/services/location";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
+const JOURNEY_TRACKING_TASK = "journey-tracking-task";
+const DELIVERY_TRACKING_TASK = "delivery-tracking-task";
 const GEOFENCING_TASK = "geofencing-task";
-const LOCATION_TASK_NAME = "background-location-task";
+const BACKGROUND_TRACKING_STORAGE_KEY = "background_tracking_queue";
 
-TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
+interface StoredPoint {
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+}
+
+// Función Haversine para calcular distancia
+const calculateDistance = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number => {
+  const R = 6371e3;
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+};
+
+const addPointToStorage = async (location: Location.LocationObject) => {
+  try {
+    const existingPointsJSON = await AsyncStorage.getItem(
+      BACKGROUND_TRACKING_STORAGE_KEY
+    );
+    const points: StoredPoint[] = existingPointsJSON
+      ? JSON.parse(existingPointsJSON)
+      : [];
+
+    const newPoint: StoredPoint = {
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+      timestamp: new Date(location.timestamp).toISOString(),
+    };
+
+    // LÓGICA DE FILTRADO INTELIGENTE
+    if (points.length > 0) {
+      const lastPoint = points[points.length - 1];
+
+      // Calcular distancia desde el último punto
+      const distance = calculateDistance(
+        lastPoint.latitude,
+        lastPoint.longitude,
+        newPoint.latitude,
+        newPoint.longitude
+      );
+
+      // Calcular tiempo desde el último punto (en minutos)
+      const lastTime = new Date(lastPoint.timestamp).getTime();
+      const newTime = new Date(newPoint.timestamp).getTime();
+      const minutesElapsed = (newTime - lastTime) / (1000 * 60);
+
+      // REGLAS DE FILTRADO:
+
+      // REGLA 1: Si se movió menos de 30m
+      if (distance < 30) {
+        // Pero ya pasaron más de 10 minutos en el mismo lugar
+        // Guardar UN punto adicional para marcar que sigue ahí
+        if (minutesElapsed > 10) {
+          // Buscar si ya hay un punto reciente en esta ubicación
+          const recentStationaryPoints = points.filter((p) => {
+            const pointTime = new Date(p.timestamp).getTime();
+            const minutesSincePoint = (newTime - pointTime) / (1000 * 60);
+            const pointDistance = calculateDistance(
+              p.latitude,
+              p.longitude,
+              newPoint.latitude,
+              newPoint.longitude
+            );
+            return pointDistance < 30 && minutesSincePoint < 15;
+          });
+
+          // Si ya hay 2+ puntos recientes aquí, no guardar más
+          if (recentStationaryPoints.length >= 2) {
+            console.log(
+              `[TaskManager] ⏭️ Punto ignorado: Ya hay ${recentStationaryPoints.length} puntos en esta ubicación estacionaria`
+            );
+            return;
+          }
+        } else {
+          // Menos de 10 minutos y menos de 30m = definitivamente ignorar
+          console.log(
+            `[TaskManager] ⏭️ Punto ignorado: ${distance.toFixed(
+              1
+            )}m en ${minutesElapsed.toFixed(1)}min`
+          );
+          return;
+        }
+      }
+
+      // REGLA 2: Se movió más de 30m = siempre guardar
+      console.log(
+        `[TaskManager] ✅ Punto guardado: ${distance.toFixed(
+          1
+        )}m desde último punto`
+      );
+    } else {
+      console.log(`[TaskManager] ✅ Primer punto guardado`);
+    }
+
+    points.push(newPoint);
+    await AsyncStorage.setItem(
+      BACKGROUND_TRACKING_STORAGE_KEY,
+      JSON.stringify(points)
+    );
+
+    console.log(`[TaskManager] Total en buffer: ${points.length} puntos`);
+  } catch (e) {
+    console.error("[TaskManager] Error al guardar punto:", e);
+  }
+};
+
+// ============================================
+// TASK 1: Tracking de Jornada (baja frecuencia)
+// ============================================
+TaskManager.defineTask(JOURNEY_TRACKING_TASK, async ({ data, error }) => {
   if (error) {
-    console.error("TaskManager (Location) Error:", error);
+    console.error("[JourneyTracking] Error:", error);
     return;
   }
+
   if (data) {
     const { locations } = data as { locations: Location.LocationObject[] };
-    const latestLocation = locations[0];
+    const location = locations[0];
+
     console.log(
-      "📍 Ubicación recibida en segundo plano:",
-      latestLocation.coords
+      `[JourneyTracking] Recibidos ${locations.length} puntos en background.`
     );
+
+    for (const location of locations) {
+      await addPointToStorage(location);
+    }
+
+    console.log("[JourneyTracking] Punto capturado (baja frecuencia):", {
+      lat: location.coords.latitude,
+      lng: location.coords.longitude,
+      time: new Date().toLocaleTimeString(),
+      accuracy: Math.round(location.coords.accuracy || 0) + "m",
+    });
   }
-  return null;
+});
+
+// ============================================
+// TASK 2: Tracking de Entrega (alta frecuencia)
+// ============================================
+TaskManager.defineTask(DELIVERY_TRACKING_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error("[DeliveryTracking] Error:", error);
+    return;
+  }
+
+  if (data) {
+    const { locations } = data as { locations: Location.LocationObject[] };
+    const location = locations[0];
+
+    console.log(
+      `[DeliveryTracking] Recibidos ${locations.length} puntos en background.`
+    );
+
+    for (const location of locations) {
+      await addPointToStorage(location);
+    }
+
+    console.log("[DeliveryTracking] Punto capturado (alta frecuencia):", {
+      lat: location.coords.latitude,
+      lng: location.coords.longitude,
+      time: new Date().toLocaleTimeString(),
+      accuracy: Math.round(location.coords.accuracy || 0) + "m",
+      speed: location.coords.speed
+        ? `${Math.round(location.coords.speed * 3.6)} km/h`
+        : "0 km/h",
+    });
+  }
 });
 
 // Definición de la tarea de geofencing

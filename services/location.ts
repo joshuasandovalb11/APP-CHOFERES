@@ -1,21 +1,77 @@
+// services/location.ts - VERSIÓN OPTIMIZADA
+
 import * as Location from "expo-location";
 import { Linking, Alert } from "react-native";
 import { Delivery, Location as LocationType } from "../types";
 import * as Notifications from "expo-notifications";
 
-const LOCATION_TASK_NAME = "background-location-task";
+const JOURNEY_TRACKING_TASK = "journey-tracking-task";
+const DELIVERY_TRACKING_TASK = "delivery-tracking-task";
 
 export class LocationService {
-  private watchId: Location.LocationSubscription | null = null;
   private persistentNotificationId: string | null = null;
+  private currentTrackingMode: "journey" | "delivery" | null = null;
 
-  async startForegroundUpdate(delivery: Delivery): Promise<void> {
+  /**
+   * MODO 1: Tracking de Jornada (sin entrega activa)
+   * - Menos frecuente para ahorrar batería
+   * - Solo captura la ruta general del día
+   */
+  async startJourneyTracking(): Promise<void> {
+    const hasPermission = await this.checkAndRequestLocationPermissions();
+    if (!hasPermission) throw new Error("Sin permisos");
+
+    // Detener tracking de delivery si existe
+    await this.stopDeliveryTracking();
+
+    const isRunning = await Location.hasStartedLocationUpdatesAsync(
+      JOURNEY_TRACKING_TASK
+    );
+    if (isRunning) {
+      console.log("[JourneyTracking] Ya está activo");
+      return;
+    }
+
+    await Location.startLocationUpdatesAsync(JOURNEY_TRACKING_TASK, {
+      accuracy: Location.Accuracy.Balanced, // Balance entre precisión y batería
+      distanceInterval: 50, // Cada 100 metros (antes 50m)
+      timeInterval: 3 * 60 * 1000, // O cada 5 minutos (antes 2min)
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: "Jornada Activa",
+        notificationBody: "Registrando tu ruta del día",
+        notificationColor: "#007AFF",
+      },
+    });
+
+    this.currentTrackingMode = "journey";
+    console.log("[JourneyTracking] INICIADO - Modo ahorro de batería");
+  }
+
+  /**
+   * MODO 2: Tracking de Entrega (durante una entrega activa)
+   * - Más frecuente y preciso
+   * - Necesario para calcular distancia real recorrida
+   */
+  async startDeliveryTracking(delivery: Delivery): Promise<void> {
     const hasPermission = await this.checkAndRequestLocationPermissions();
     if (!hasPermission) {
       console.log("No se pudo iniciar el servicio por falta de permisos.");
       return;
     }
 
+    // Detener tracking de journey
+    await this.stopJourneyTracking();
+
+    const isRunning = await Location.hasStartedLocationUpdatesAsync(
+      DELIVERY_TRACKING_TASK
+    );
+    if (isRunning) {
+      console.log("[DeliveryTracking] Ya está activo");
+      return;
+    }
+
+    // Crear notificación persistente
     if (this.persistentNotificationId) {
       await Notifications.dismissNotificationAsync(
         this.persistentNotificationId
@@ -24,10 +80,6 @@ export class LocationService {
 
     const distance = delivery.estimated_distance || "Calculando...";
     const duration = delivery.estimated_duration || "Calculando...";
-
-    console.log(
-      `[LocationService] Creando notificación con: ${distance}, ${duration}`
-    );
 
     const notificationId = await Notifications.scheduleNotificationAsync({
       content: {
@@ -47,36 +99,72 @@ export class LocationService {
 
     this.persistentNotificationId = notificationId;
 
-    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-      accuracy: Location.Accuracy.BestForNavigation,
+    // Iniciar tracking más preciso
+    await Location.startLocationUpdatesAsync(DELIVERY_TRACKING_TASK, {
+      accuracy: Location.Accuracy.High, // Alta precisión
+      distanceInterval: 20, // Cada 30 metros (más frecuente)
+      timeInterval: 1 * 60 * 1000, // O cada 1 minuto
       showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: `Entrega en progreso: ${delivery.client?.name}`,
+        notificationBody: `${distance} | ${duration}`,
+        notificationColor: "#28A745",
+      },
     });
 
-    console.log("Servicio INICIADO para la entrega:", delivery.delivery_id);
+    this.currentTrackingMode = "delivery";
+    console.log("[DeliveryTracking] INICIADO - Modo alta precisión");
   }
 
-  async stopForegroundUpdate(): Promise<void> {
+  /**
+   * Detiene el tracking de jornada y vuelve a modo delivery si hay una activa
+   */
+  async stopJourneyTracking(): Promise<void> {
+    const isRunning = await Location.hasStartedLocationUpdatesAsync(
+      JOURNEY_TRACKING_TASK
+    );
+
+    if (isRunning) {
+      await Location.stopLocationUpdatesAsync(JOURNEY_TRACKING_TASK);
+      console.log("[JourneyTracking] DETENIDO");
+    }
+  }
+
+  /**
+   * Detiene el tracking de delivery y vuelve a modo journey
+   */
+  async stopDeliveryTracking(): Promise<void> {
+    const isRunning = await Location.hasStartedLocationUpdatesAsync(
+      DELIVERY_TRACKING_TASK
+    );
+
+    if (isRunning) {
+      await Location.stopLocationUpdatesAsync(DELIVERY_TRACKING_TASK);
+      console.log("[DeliveryTracking] DETENIDO");
+    }
+
     if (this.persistentNotificationId) {
       await Notifications.dismissNotificationAsync(
         this.persistentNotificationId
       );
       this.persistentNotificationId = null;
+      console.log("Notificación de entrega eliminada");
     }
 
-    const isTracking = await Location.hasStartedLocationUpdatesAsync(
-      LOCATION_TASK_NAME
-    );
-    if (isTracking) {
-      await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-      console.log("Servicio DETENIDO.");
-    }
+    this.currentTrackingMode = null;
   }
 
   /**
-   * Verifica y solicita permisos de ubicación de forma inteligente.
-   * Guía al usuario si necesita ir a la configuración.
-   * @returns {Promise<boolean>} Devuelve true si todos los permisos necesarios están concedidos.
+   * Detiene todo el tracking (al finalizar la jornada)
    */
+  async stopAllTracking(): Promise<void> {
+    await this.stopJourneyTracking();
+    await this.stopDeliveryTracking();
+    this.currentTrackingMode = null;
+    console.log("[LocationService] Todo el tracking DETENIDO");
+  }
+
+  // Función para verificar y solicitar permisos de ubicación
   async checkAndRequestLocationPermissions(): Promise<boolean> {
     let { status: foregroundStatus } =
       await Location.getForegroundPermissionsAsync();
@@ -148,46 +236,7 @@ export class LocationService {
     }
   }
 
-  // Funcion para INICIAR el seguimiento de la ubicación
-  async startLocationTracking(
-    callback: (location: LocationType) => void
-  ): Promise<boolean> {
-    try {
-      const hasPermission = await this.checkAndRequestLocationPermissions();
-      if (!hasPermission) {
-        return false;
-      }
-
-      this.watchId = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 10000, // Actualizar cada 10 segundos
-          distanceInterval: 50, // O cuando se mueva 50 metros
-        },
-        (location) => {
-          callback({
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-          });
-        }
-      );
-
-      return true;
-    } catch (error) {
-      console.error("Error starting location tracking:", error);
-      return false;
-    }
-  }
-
-  // Funcion para DETENER el seguimiento de la ubicación
-  stopLocationTracking(): void {
-    if (this.watchId) {
-      this.watchId.remove();
-      this.watchId = null;
-    }
-  }
-
-  // Funcion para calcular la distancia entre dos puntos
+  // Función para calcular la distancia entre dos puntos (Haversine)
   calculateDistance(point1: LocationType, point2: LocationType): number {
     const R = 6371e3;
     const φ1 = (point1.latitude * Math.PI) / 180;
@@ -203,7 +252,7 @@ export class LocationService {
     return R * c;
   }
 
-  // Funcion para abrir Google Maps con navegación
+  // Función para abrir Google Maps con indicaciones
   async openGoogleMaps(
     destination: LocationType,
     origin?: LocationType
@@ -212,10 +261,8 @@ export class LocationService {
       let url: string;
 
       if (origin) {
-        // Ruta desde origen específico
         url = `https://www.google.com/maps/dir/${origin.latitude},${origin.longitude}/${destination.latitude},${destination.longitude}`;
       } else {
-        // Ruta desde ubicación actual
         url = `https://www.google.com/maps/dir/?api=1&destination=${destination.latitude},${destination.longitude}&travelmode=driving`;
       }
 
@@ -223,7 +270,6 @@ export class LocationService {
       if (supported) {
         await Linking.openURL(url);
       } else {
-        // Fallback a la app de mapas del sistema
         const fallbackUrl = `maps:${destination.latitude},${destination.longitude}`;
         await Linking.openURL(fallbackUrl);
       }
@@ -232,7 +278,7 @@ export class LocationService {
     }
   }
 
-  // Abrir Google Maps solo para ver la ubicación (sin navegación)
+  // Función para ver una ubicación en el mapa (sin ruta)
   async viewLocationOnMap(location: LocationType): Promise<void> {
     try {
       const label = "Ubicación del Cliente";
@@ -242,8 +288,7 @@ export class LocationService {
       if (supported) {
         await Linking.openURL(url);
       } else {
-        // Fallback a la URL web si no hay una app de mapas
-        const fallbackUrl = `https://www.google.com/maps/search/?api=1&query=...,${location.longitude},15z`;
+        const fallbackUrl = `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude},15z`;
         await Linking.openURL(fallbackUrl);
       }
     } catch (error) {
@@ -252,7 +297,7 @@ export class LocationService {
     }
   }
 
-  // Funcion para obtener la dirección a partir de coordenadas
+  // Función para obtener la dirección a partir de coordenadas
   async getAddressFromCoordinates(location: LocationType): Promise<string> {
     try {
       const addresses = await Location.reverseGeocodeAsync(location);
@@ -275,7 +320,7 @@ export class LocationService {
     }
   }
 
-  // Funcion para ordenar entregas por proximidad
+  // Función para ordenar entregas por proximidad a una ubicación
   sortDeliveriesByProximity<
     T extends { client?: { gps_location: string }; distance?: number }
   >(deliveries: T[], currentLocation: LocationType): T[] {
@@ -292,7 +337,7 @@ export class LocationService {
     return deliveriesWithDistance.sort((a, b) => a.distance - b.distance);
   }
 
-  // Funcion para parsear la ubicación GPS desde string
+  // Función para convertir "lat,lng" a objeto LocationType
   private parseGPSLocation(gpsLocation: string): LocationType | null {
     try {
       if (!gpsLocation || !gpsLocation.includes(",")) return null;

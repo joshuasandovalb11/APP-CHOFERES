@@ -55,7 +55,11 @@ export type IncidentReason =
 // | "OTRO";
 
 // EventType para marcar inicios y fines de entregas
-export type TrackingEventType = "journey" | "start_delivery" | "end_delivery";
+export type TrackingEventType =
+  | "journey"
+  | "start_delivery"
+  | "end_delivery"
+  | "delivery_journey";
 
 // Types para calcular los puntos de ruta
 export interface TrackingPoint {

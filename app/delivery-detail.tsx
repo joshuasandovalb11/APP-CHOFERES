@@ -136,7 +136,7 @@ export default function DeliveryDetailScreen() {
         delivery.delivery_id;
 
       if (isActiveDelivery) {
-        await locationService.stopForegroundUpdate();
+        await locationService.stopDeliveryTracking();
       }
       reportIncident(delivery.delivery_id, reason, notes);
       setIncidentModalVisible(false);
@@ -201,7 +201,6 @@ export default function DeliveryDetailScreen() {
             try {
               await startDelivery(delivery.delivery_id);
 
-              // await locationService.startForegroundUpdate(delivery);
               if (destinationLocation) {
                 await ExpoLocation.startGeofencingAsync(GEOFENCING_TASK, [
                   {
@@ -259,7 +258,7 @@ export default function DeliveryDetailScreen() {
                   currentLocation
                 );
               }
-              await locationService.stopForegroundUpdate();
+              await locationService.stopDeliveryTracking();
               completeDelivery(delivery.delivery_id);
               router.back();
             } catch (error) {
@@ -316,7 +315,7 @@ export default function DeliveryDetailScreen() {
   //             text: "Completar",
   //             onPress: async () => {
   //               hideModal();
-  //               await locationService.stopForegroundUpdate();
+  //               await locationService.stopDeliveryTracking();
   //               logDeliveryEvent(
   //                 "end_delivery",
   //                 delivery.delivery_id,

@@ -20,7 +20,7 @@ import ActionModal from "@/components/ActionModal";
 export default function FECInputScreen() {
   const [fecNumber, setFecNumber] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { login, startJourneyTracking, setOptimizedRoute } = useApp();
+  const { login, startDailyJourney, setOptimizedRoute } = useApp();
   const router = useRouter();
   const params = useLocalSearchParams();
 
@@ -133,7 +133,7 @@ export default function FECInputScreen() {
       });
 
       await login(driver, fecData);
-      startJourneyTracking();
+      await startDailyJourney();
       router.replace("/dashboard");
     } catch (error: any) {
       const errorMessage =
