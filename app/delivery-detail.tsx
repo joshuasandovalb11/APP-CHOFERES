@@ -130,19 +130,27 @@ export default function DeliveryDetailScreen() {
     reason: IncidentReason,
     notes?: string
   ) => {
-    if (delivery) {
-      const isActiveDelivery =
-        state.deliveryStatus.currentDelivery?.delivery_id ===
-        delivery.delivery_id;
+    if (!delivery) return;
 
-      if (isActiveDelivery) {
-        await locationService.stopDeliveryTracking();
-      }
-      reportIncident(delivery.delivery_id, reason, notes);
-      setIncidentModalVisible(false);
+    const isActiveDelivery =
+      state.deliveryStatus.currentDelivery?.delivery_id ===
+      delivery.delivery_id;
 
-      router.back();
+    if (isActiveDelivery) {
+      console.log(
+        "[DeliveryDetail] Reportando incidencia de entrega activa:",
+        delivery.delivery_id
+      );
+    } else {
+      console.log(
+        "[DeliveryDetail] Reportando incidencia de entrega pendiente:",
+        delivery.delivery_id
+      );
     }
+
+    await reportIncident(delivery.delivery_id, reason, notes);
+    setIncidentModalVisible(false);
+    router.back();
   };
 
   // Funcion para mandar a llamar la app de telefono

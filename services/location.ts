@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import { Linking, Alert } from "react-native";
 import { Delivery, Location as LocationType } from "../types";
 import * as Notifications from "expo-notifications";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const JOURNEY_TRACKING_TASK = "journey-tracking-task";
 const DELIVERY_TRACKING_TASK = "delivery-tracking-task";
@@ -33,9 +34,9 @@ export class LocationService {
     }
 
     await Location.startLocationUpdatesAsync(JOURNEY_TRACKING_TASK, {
-      accuracy: Location.Accuracy.Balanced, // Balance entre precisión y batería
-      distanceInterval: 50, // Cada 100 metros (antes 50m)
-      timeInterval: 3 * 60 * 1000, // O cada 5 minutos (antes 2min)
+      accuracy: Location.Accuracy.Balanced,
+      distanceInterval: 50, // Cada 50 metros
+      timeInterval: 3 * 60 * 1000, // O cada 3 minutos
       showsBackgroundLocationIndicator: true,
       foregroundService: {
         notificationTitle: "Jornada Activa",
@@ -101,8 +102,8 @@ export class LocationService {
 
     // Iniciar tracking más preciso
     await Location.startLocationUpdatesAsync(DELIVERY_TRACKING_TASK, {
-      accuracy: Location.Accuracy.High, // Alta precisión
-      distanceInterval: 20, // Cada 30 metros (más frecuente)
+      accuracy: Location.Accuracy.High,
+      distanceInterval: 20, // Cada 20 metros (más frecuente)
       timeInterval: 1 * 60 * 1000, // O cada 1 minuto
       showsBackgroundLocationIndicator: true,
       foregroundService: {
@@ -348,6 +349,21 @@ export class LocationService {
       return { latitude: lat, longitude: lng };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Limpia el storage de tracking (útil al cambiar de FEC)
+   */
+  async clearTrackingData(): Promise<void> {
+    try {
+      await AsyncStorage.multiRemove([
+        "background_tracking_queue",
+        "last_saved_tracking_point",
+      ]);
+      console.log("[LocationService] 🧹 Datos de tracking limpiados");
+    } catch (error) {
+      console.error("[LocationService] Error limpiando datos:", error);
     }
   }
 }

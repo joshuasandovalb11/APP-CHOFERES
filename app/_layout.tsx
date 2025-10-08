@@ -29,6 +29,7 @@ const JOURNEY_TRACKING_TASK = "journey-tracking-task";
 const DELIVERY_TRACKING_TASK = "delivery-tracking-task";
 const GEOFENCING_TASK = "geofencing-task";
 const BACKGROUND_TRACKING_STORAGE_KEY = "background_tracking_queue";
+const LAST_SAVED_POINT_KEY = "last_saved_tracking_point";
 
 interface StoredPoint {
   latitude: number;
@@ -36,7 +37,6 @@ interface StoredPoint {
   timestamp: string;
 }
 
-// Función Haversine para calcular distancia
 const calculateDistance = (
   lat1: number,
   lon1: number,
@@ -59,45 +59,39 @@ const calculateDistance = (
 
 const addPointToStorage = async (location: Location.LocationObject) => {
   try {
-    const existingPointsJSON = await AsyncStorage.getItem(
-      BACKGROUND_TRACKING_STORAGE_KEY
-    );
-    const points: StoredPoint[] = existingPointsJSON
-      ? JSON.parse(existingPointsJSON)
-      : [];
-
     const newPoint: StoredPoint = {
       latitude: location.coords.latitude,
       longitude: location.coords.longitude,
       timestamp: new Date(location.timestamp).toISOString(),
     };
 
-    // LÓGICA DE FILTRADO INTELIGENTE
-    if (points.length > 0) {
-      const lastPoint = points[points.length - 1];
+    const lastSavedJSON = await AsyncStorage.getItem(LAST_SAVED_POINT_KEY);
+    const lastSavedPoint: StoredPoint | null = lastSavedJSON
+      ? JSON.parse(lastSavedJSON)
+      : null;
 
-      // Calcular distancia desde el último punto
+    if (lastSavedPoint) {
       const distance = calculateDistance(
-        lastPoint.latitude,
-        lastPoint.longitude,
+        lastSavedPoint.latitude,
+        lastSavedPoint.longitude,
         newPoint.latitude,
         newPoint.longitude
       );
 
-      // Calcular tiempo desde el último punto (en minutos)
-      const lastTime = new Date(lastPoint.timestamp).getTime();
+      const lastTime = new Date(lastSavedPoint.timestamp).getTime();
       const newTime = new Date(newPoint.timestamp).getTime();
       const minutesElapsed = (newTime - lastTime) / (1000 * 60);
 
-      // REGLAS DE FILTRADO:
-
-      // REGLA 1: Si se movió menos de 30m
       if (distance < 30) {
-        // Pero ya pasaron más de 10 minutos en el mismo lugar
-        // Guardar UN punto adicional para marcar que sigue ahí
         if (minutesElapsed > 10) {
-          // Buscar si ya hay un punto reciente en esta ubicación
-          const recentStationaryPoints = points.filter((p) => {
+          const existingPointsJSON = await AsyncStorage.getItem(
+            BACKGROUND_TRACKING_STORAGE_KEY
+          );
+          const existingPoints: StoredPoint[] = existingPointsJSON
+            ? JSON.parse(existingPointsJSON)
+            : [];
+
+          const recentStationaryPoints = existingPoints.filter((p) => {
             const pointTime = new Date(p.timestamp).getTime();
             const minutesSincePoint = (newTime - pointTime) / (1000 * 60);
             const pointDistance = calculateDistance(
@@ -109,7 +103,6 @@ const addPointToStorage = async (location: Location.LocationObject) => {
             return pointDistance < 30 && minutesSincePoint < 15;
           });
 
-          // Si ya hay 2+ puntos recientes aquí, no guardar más
           if (recentStationaryPoints.length >= 2) {
             console.log(
               `[TaskManager] ⏭️ Punto ignorado: Ya hay ${recentStationaryPoints.length} puntos en esta ubicación estacionaria`
@@ -117,7 +110,6 @@ const addPointToStorage = async (location: Location.LocationObject) => {
             return;
           }
         } else {
-          // Menos de 10 minutos y menos de 30m = definitivamente ignorar
           console.log(
             `[TaskManager] ⏭️ Punto ignorado: ${distance.toFixed(
               1
@@ -127,7 +119,6 @@ const addPointToStorage = async (location: Location.LocationObject) => {
         }
       }
 
-      // REGLA 2: Se movió más de 30m = siempre guardar
       console.log(
         `[TaskManager] ✅ Punto guardado: ${distance.toFixed(
           1
@@ -137,11 +128,20 @@ const addPointToStorage = async (location: Location.LocationObject) => {
       console.log(`[TaskManager] ✅ Primer punto guardado`);
     }
 
+    const existingPointsJSON = await AsyncStorage.getItem(
+      BACKGROUND_TRACKING_STORAGE_KEY
+    );
+    const points: StoredPoint[] = existingPointsJSON
+      ? JSON.parse(existingPointsJSON)
+      : [];
+
     points.push(newPoint);
     await AsyncStorage.setItem(
       BACKGROUND_TRACKING_STORAGE_KEY,
       JSON.stringify(points)
     );
+
+    await AsyncStorage.setItem(LAST_SAVED_POINT_KEY, JSON.stringify(newPoint));
 
     console.log(`[TaskManager] Total en buffer: ${points.length} puntos`);
   } catch (e) {
